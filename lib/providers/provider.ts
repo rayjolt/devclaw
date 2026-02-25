@@ -75,6 +75,17 @@ export interface IssueProvider {
   ensureAllStateLabels(): Promise<void>;
   createIssue(title: string, description: string, label: StateLabel, assignees?: string[]): Promise<Issue>;
   listIssuesByLabel(label: StateLabel): Promise<Issue[]>;
+  /**
+   * Compute dispatch blocking state for queued issues using provider-native dependency graph data.
+   * Returns a map keyed by issue ID where true means "blocked, do not dispatch".
+   *
+   * Semantics:
+   * - Any unresolved blocker keeps the issue blocked
+   * - Rejected blockers are treated as unresolved (still blocking)
+   *
+   * Implementations may throw when dependency data cannot be read.
+   */
+  getDependencyBlockedMap(issueIds: number[]): Promise<Map<number, boolean>>;
   /** List issues with optional filters. Provider-agnostic — future Jira/Linear/Trello can map to native queries. */
   listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]>;
   getIssue(issueId: number): Promise<Issue>;

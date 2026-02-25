@@ -201,6 +201,12 @@ export class GitHubProvider implements IssueProvider {
     } catch { return []; }
   }
 
+  async getDependencyBlockedMap(issueIds: number[]): Promise<Map<number, boolean>> {
+    // Default optimistic fallback for providers/environments where dependency graph
+    // fields are unavailable. Queue scanning applies fail-closed when this call throws.
+    return new Map(issueIds.map((id) => [id, false] as const));
+  }
+
   async listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]> {
     try {
       const args = ["issue", "list", "--state", opts?.state ?? "open", "--json", "number,title,body,labels,state,url"];

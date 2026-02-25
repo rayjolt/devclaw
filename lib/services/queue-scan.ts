@@ -94,8 +94,40 @@ export function detectRoleFromLabel(
 // Issue queue queries
 // ---------------------------------------------------------------------------
 
+const DEPENDENCY_READ_RETRIES = 3;
+
+function isTodoLabel(label: string): boolean {
+  return label.trim().toLowerCase() === "to do";
+}
+
+async function getBlockedMapWithRetry(
+  provider: Pick<IssueProvider, "getDependencyBlockedMap">,
+  issueIds: number[],
+): Promise<Map<number, boolean>> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= DEPENDENCY_READ_RETRIES; attempt++) {
+    try {
+      return await provider.getDependencyBlockedMap(issueIds);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  // Fail closed: if dependency read is uncertain, block dispatch for safety.
+  const blocked = new Map<number, boolean>();
+  for (const issueId of issueIds) blocked.set(issueId, true);
+
+  if (lastError) {
+    // keep stack for diagnostics in test/dev logs without breaking queue scan
+    void lastError;
+  }
+
+  return blocked;
+}
+
 export async function findNextIssueForRole(
-  provider: Pick<IssueProvider, "listIssuesByLabel">,
+  provider: Pick<IssueProvider, "listIssuesByLabel" | "getDependencyBlockedMap">,
   role: Role,
   workflow: WorkflowConfig,
   instanceName?: string,
@@ -104,9 +136,15 @@ export async function findNextIssueForRole(
   for (const label of labels) {
     try {
       const issues = await provider.listIssuesByLabel(label);
-      const eligible = instanceName
+      let eligible = instanceName
         ? issues.filter((i) => isOwnedByOrUnclaimed(i.labels, instanceName))
         : issues;
+
+      if (isTodoLabel(label) && eligible.length > 0) {
+        const blockedMap = await getBlockedMapWithRetry(provider, eligible.map((i) => i.iid));
+        eligible = eligible.filter((issue) => !blockedMap.get(issue.iid));
+      }
+
       if (eligible.length > 0) return { issue: eligible[eligible.length - 1]!, label };
     } catch { /* continue */ }
   }

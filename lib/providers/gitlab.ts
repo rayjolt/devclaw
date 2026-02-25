@@ -104,6 +104,12 @@ export class GitLabProvider implements IssueProvider {
     } catch { return []; }
   }
 
+  async getDependencyBlockedMap(issueIds: number[]): Promise<Map<number, boolean>> {
+    // GitLab issue dependency support varies by tier/API shape.
+    // Keep default behavior unchanged unless dependency data is explicitly available.
+    return new Map(issueIds.map((id) => [id, false] as const));
+  }
+
   async listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]> {
     try {
       const args = ["issue", "list", "--output", "json"];
