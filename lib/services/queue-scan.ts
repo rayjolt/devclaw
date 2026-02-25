@@ -4,13 +4,14 @@
  * Shared by: tick (projectTick), work-start (auto-pickup), and other consumers
  * that need to find queued issues or detect roles/levels from labels.
  */
-import type { Issue, StateLabel } from "../providers/provider.js";
+import type { Issue, IssueDependency, StateLabel } from "../providers/provider.js";
 import type { IssueProvider } from "../providers/provider.js";
 import { getLevelsForRole, getAllLevels } from "../roles/index.js";
 import {
   getQueueLabels,
   getAllQueueLabels,
   detectRoleFromLabel as workflowDetectRole,
+  findStateByLabel,
   isOwnedByOrUnclaimed,
   type WorkflowConfig,
   type Role,
@@ -95,7 +96,7 @@ export function detectRoleFromLabel(
 // ---------------------------------------------------------------------------
 
 export async function findNextIssueForRole(
-  provider: Pick<IssueProvider, "listIssuesByLabel">,
+  provider: Pick<IssueProvider, "listIssuesByLabel" | "getIssueDependencies">,
   role: Role,
   workflow: WorkflowConfig,
   instanceName?: string,
@@ -107,8 +108,56 @@ export async function findNextIssueForRole(
       const eligible = instanceName
         ? issues.filter((i) => isOwnedByOrUnclaimed(i.labels, instanceName))
         : issues;
-      if (eligible.length > 0) return { issue: eligible[eligible.length - 1]!, label };
+
+      for (const issue of eligible.slice().reverse()) {
+        const blocked = await isIssueBlocked(provider, issue, workflow);
+        if (!blocked) return { issue, label };
+      }
     } catch { /* continue */ }
+  }
+  return null;
+}
+
+async function isIssueBlocked(
+  provider: Pick<IssueProvider, "getIssueDependencies">,
+  issue: Issue,
+  workflow: WorkflowConfig,
+): Promise<boolean> {
+  const deps = await getIssueDependenciesWithRetry(provider, issue.iid, 3);
+  if (!deps) return true; // fail-closed when dependency status is uncertain
+  return deps.blockers.some((blocker) => !isResolvedBlocker(blocker, workflow));
+}
+
+function isResolvedBlocker(blocker: IssueDependency, workflow: WorkflowConfig): boolean {
+  const labels = blocker.labels ?? [];
+
+  // Explicit requirement: Rejected blockers remain blocking.
+  if (labels.some((l) => l.toLowerCase() === "rejected")) return false;
+
+  // Any other terminal state label resolves the blocker.
+  const hasTerminalLabel = labels.some((l) => {
+    const state = findStateByLabel(workflow, l);
+    return state?.type === "terminal";
+  });
+  if (hasTerminalLabel) return true;
+
+  // Fallback when labels are unavailable: use provider issue state.
+  const state = blocker.state.toLowerCase();
+  return state === "closed" || state === "done" || state === "merged";
+}
+
+async function getIssueDependenciesWithRetry(
+  provider: Pick<IssueProvider, "getIssueDependencies">,
+  issueId: number,
+  attempts: number,
+): Promise<Awaited<ReturnType<IssueProvider["getIssueDependencies"]>> | null> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await provider.getIssueDependencies(issueId);
+    } catch {
+      if (i === attempts - 1) return null;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (i + 1)));
+    }
   }
   return null;
 }
