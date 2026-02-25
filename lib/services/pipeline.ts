@@ -226,19 +226,24 @@ export async function executeCompletion(opts: {
   // Finally deactivate worker (last — ensures label is set even if deactivation fails)
   
   const effectiveTo = ciOverrideToLabel ?? (rule.to as StateLabel);
-  if (effectiveTo !== rule.from) {
+  const transitioned = effectiveTo !== rule.from;
+  if (transitioned) {
     await provider.transitionLabel(issueId, rule.from as StateLabel, effectiveTo as StateLabel);
   }
 
-  // Execute post-transition actions
-  for (const action of rule.actions) {
-    switch (action) {
-      case Action.CLOSE_ISSUE:
-        await provider.closeIssue(issueId);
-        break;
-      case Action.REOPEN_ISSUE:
-        await provider.reopenIssue(issueId);
-        break;
+  // Execute post-transition actions only on the primary success/failure rule path.
+  // If CI gating overrides/blocks the transition, side effects must not run.
+  const runPostActions = transitioned && effectiveTo === rule.to;
+  if (runPostActions) {
+    for (const action of rule.actions) {
+      switch (action) {
+        case Action.CLOSE_ISSUE:
+          await provider.closeIssue(issueId);
+          break;
+        case Action.REOPEN_ISSUE:
+          await provider.reopenIssue(issueId);
+          break;
+      }
     }
   }
 
@@ -300,8 +305,8 @@ export async function executeCompletion(opts: {
     nextState: effectiveNextState,
     prUrl,
     issueUrl: issue.web_url,
-    issueClosed: rule.actions.includes(Action.CLOSE_ISSUE),
-    issueReopened: rule.actions.includes(Action.REOPEN_ISSUE),
+    issueClosed: runPostActions && rule.actions.includes(Action.CLOSE_ISSUE),
+    issueReopened: runPostActions && rule.actions.includes(Action.REOPEN_ISSUE),
   };
 }
 
