@@ -494,30 +494,68 @@ You can also use the [CLI wizard or non-interactive setup](docs/ONBOARDING.md#st
 
 ---
 
+## Development quality gates
+
+This repository enforces quality checks both locally and in CI.
+
+### Local pre-commit checks
+
+We use [husky](https://typicode.github.io/husky/) + [lint-staged](https://github.com/lint-staged/lint-staged) for fast staged-file checks.
+
+```bash
+npm install
+```
+
+After install, Git hooks are set up automatically via `prepare`.
+
+### Run checks locally
+
+```bash
+npm run format-check   # formatting validation
+npm run lint           # lint rules
+npm run build          # production build (+ type-check)
+npm run test           # test suite
+npm run validate       # all gates in CI order
+```
+
+### CI enforcement
+
+GitHub Actions runs on every pull request and push to `main` (Node 22):
+
+1. `npm ci`
+2. `npm run format-check`
+3. `npm run lint`
+4. `npm run build`
+5. `npm run test`
+
+Any failing step fails the workflow, making checks ready for branch protection rules.
+
+---
+
 ## The toolbox
 
 DevClaw gives the orchestrator 18 tools. These aren't just convenience wrappers — they're **guardrails**. Each tool encodes a complex multi-step operation into a single atomic call. The agent provides intent, the plugin handles mechanics. The agent physically cannot skip a label transition, forget to update state, or dispatch to the wrong session — those decisions are made by deterministic code, not LLM reasoning.
 
-| Tool                   | What it does                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------- |
-| `task_start`           | Advance an issue to the next queue (state-agnostic). Heartbeat handles dispatch.        |
-| `work_finish`          | Complete a task — transitions label, updates state, closes/reopens issue                |
-| `task_create`          | Create a new issue (used by workers to file bugs they discover)                         |
-| `task_set_level`       | Set level hint on HOLD-state issues (Planning, Refining) before advancing               |
-| `task_comment`         | Add a comment to an issue (with role attribution)                                       |
-| `task_edit_body`       | Edit issue title/description (initial state only; audit-logged)                         |
-| `task_list`            | Browse and search issues by workflow state                                              |
-| `task_attach`          | Attach files to issues from worker sessions                                             |
-| `tasks_status`         | Full project dashboard: hold, active, and queued issues with details                    |
-| `health`               | Detect zombie workers, stale sessions, state inconsistencies                            |
-| `project_register`     | One-time project setup: creates labels, scaffolds instructions, initializes state       |
-| `setup`                | Agent + workspace initialization                                                        |
-| `onboard`              | Conversational setup guide                                                              |
-| `research_task`        | Spawn an architect for design investigation — creates issue, dispatches worker          |
-| `autoconfigure_models` | LLM-powered model selection based on available models                                   |
-| `workflow_guide`       | Configuration reference for workflow.yaml (call before editing)                         |
-| `sync_labels`          | Sync GitHub/GitLab labels with workflow config after editing `workflow.yaml`            |
-| `claim_ownership`      | Workers claim task ownership with deterministic name generation                         |
+| Tool                   | What it does                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| `task_start`           | Advance an issue to the next queue (state-agnostic). Heartbeat handles dispatch.  |
+| `work_finish`          | Complete a task — transitions label, updates state, closes/reopens issue          |
+| `task_create`          | Create a new issue (used by workers to file bugs they discover)                   |
+| `task_set_level`       | Set level hint on HOLD-state issues (Planning, Refining) before advancing         |
+| `task_comment`         | Add a comment to an issue (with role attribution)                                 |
+| `task_edit_body`       | Edit issue title/description (initial state only; audit-logged)                   |
+| `task_list`            | Browse and search issues by workflow state                                        |
+| `task_attach`          | Attach files to issues from worker sessions                                       |
+| `tasks_status`         | Full project dashboard: hold, active, and queued issues with details              |
+| `health`               | Detect zombie workers, stale sessions, state inconsistencies                      |
+| `project_register`     | One-time project setup: creates labels, scaffolds instructions, initializes state |
+| `setup`                | Agent + workspace initialization                                                  |
+| `onboard`              | Conversational setup guide                                                        |
+| `research_task`        | Spawn an architect for design investigation — creates issue, dispatches worker    |
+| `autoconfigure_models` | LLM-powered model selection based on available models                             |
+| `workflow_guide`       | Configuration reference for workflow.yaml (call before editing)                   |
+| `sync_labels`          | Sync GitHub/GitLab labels with workflow config after editing `workflow.yaml`      |
+| `claim_ownership`      | Workers claim task ownership with deterministic name generation                   |
 
 Full parameters and usage in the [Tools Reference](docs/TOOLS.md).
 
