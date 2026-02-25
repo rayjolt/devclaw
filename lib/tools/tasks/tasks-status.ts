@@ -12,7 +12,8 @@ import { getStateLabelsByType } from "../../services/queue.js";
 import { requireWorkspaceDir, resolveChannelId, resolveProject, resolveProvider } from "../helpers.js";
 import { loadConfig } from "../../config/index.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../../services/ci-gate.js";
-import { CiState, type IssueProvider } from "../../providers/provider.js";
+import { CiState, type IssueDependency, type IssueProvider } from "../../providers/provider.js";
+import { findStateByLabel } from "../../workflow/index.js";
 
 type IssueSummary = {
   id: number;
@@ -22,6 +23,17 @@ type IssueSummary = {
   ciReason?: string;
   ciFailedChecks?: string[];
   ciPendingChecks?: string[];
+  blocked?: boolean;
+  blockerIds?: number[];
+  blockedReason?: string;
+  dependencyLookupFailed?: boolean;
+};
+
+type BlockedMeta = {
+  blocked: boolean;
+  blockerIds: number[];
+  blockedReason: string;
+  dependencyLookupFailed?: boolean;
 };
 
 async function withCiSummary(provider: IssueProvider, issue: { iid: number; title: string; web_url: string }, enabled: boolean): Promise<IssueSummary> {
@@ -38,6 +50,48 @@ async function withCiSummary(provider: IssueProvider, issue: { iid: number; titl
     ciFailedChecks: ci.failedChecks,
     ciPendingChecks: ci.pendingChecks,
   };
+}
+
+export function isBlockingDependency(blocker: IssueDependency, workflow: Awaited<ReturnType<typeof loadConfig>>["workflow"]): boolean {
+  const labels = blocker.labels ?? [];
+  if (labels.some((l) => l.toLowerCase() === "rejected")) return true;
+
+  const hasTerminalLabel = labels.some((l) => {
+    const state = findStateByLabel(workflow, l);
+    return state?.type === "terminal";
+  });
+  if (hasTerminalLabel) return false;
+
+  const state = blocker.state.toLowerCase();
+  const closedLike = state === "closed" || state === "done" || state === "merged";
+  return !closedLike;
+}
+
+export async function getBlockedMeta(
+  provider: Pick<IssueProvider, "getIssueDependencies">,
+  issueId: number,
+  workflow: Awaited<ReturnType<typeof loadConfig>>["workflow"],
+): Promise<BlockedMeta> {
+  try {
+    const deps = await provider.getIssueDependencies(issueId);
+    const unresolved = deps.blockers.filter((b) => isBlockingDependency(b, workflow));
+    const blockerIds = unresolved.map((b) => b.iid);
+    if (blockerIds.length === 0) {
+      return { blocked: false, blockerIds: [], blockedReason: "No unresolved blockers" };
+    }
+    return {
+      blocked: true,
+      blockerIds,
+      blockedReason: `Blocked by issue(s): ${blockerIds.map((id) => `#${id}`).join(", ")}`,
+    };
+  } catch {
+    return {
+      blocked: true,
+      blockerIds: [],
+      blockedReason: "Blocked (fail-closed): dependency lookup failed",
+      dependencyLookupFailed: true,
+    };
+  }
 }
 
 export function createTasksStatusTool(ctx: PluginContext) {
@@ -95,7 +149,17 @@ export function createTasksStatusTool(ctx: PluginContext) {
       for (const { label } of statesByType.queue) {
         const issues = await provider.listIssues({ label, state: "open" }).catch(() => []);
         const summaries: IssueSummary[] = [];
-        for (const i of issues) summaries.push(await withCiSummary(provider, i, !!workflow.ciGating));
+        for (const i of issues) {
+          const base = await withCiSummary(provider, i, !!workflow.ciGating);
+          const blockedMeta = await getBlockedMeta(provider, i.iid, workflow);
+          summaries.push({
+            ...base,
+            blocked: blockedMeta.blocked,
+            blockerIds: blockedMeta.blockerIds,
+            blockedReason: blockedMeta.blockedReason,
+            dependencyLookupFailed: blockedMeta.dependencyLookupFailed,
+          });
+        }
         queue[label] = {
           count: issues.length,
           issues: summaries,
