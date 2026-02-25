@@ -15,6 +15,15 @@ export async function getCiStatusWithRetry(
   for (let i = 0; i < attempts; i++) {
     try {
       const status = await provider.getPrCiStatus(issueId);
+      last = status;
+      if (status.state !== CiState.UNKNOWN) {
+        return { status, attempts: i + 1 };
+      }
+      // UNKNOWN is retried per policy (fail-closed only after all retries).
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * (2 ** i)));
+        continue;
+      }
       return { status, attempts: i + 1 };
     } catch (err) {
       last = {
