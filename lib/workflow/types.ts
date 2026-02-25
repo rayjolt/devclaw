@@ -94,6 +94,8 @@ export type WorkflowConfig = {
   initial: string;
   reviewPolicy?: ReviewPolicy;
   testPolicy?: TestPolicy;
+  /** Opt-in CI gating for merge/finalization decisions. Default: false. */
+  ciGating?: boolean;
   roleExecution?: ExecutionMode;
   /** Default max workers per level across all roles. Default: 2. */
   maxWorkersPerLevel?: number;

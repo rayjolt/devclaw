@@ -6,7 +6,7 @@
  * Called by the heartbeat service during its periodic sweep.
  */
 import type { IssueProvider } from "../../providers/provider.js";
-import { PrState } from "../../providers/provider.js";
+import { CiState, PrState } from "../../providers/provider.js";
 import {
   Action,
   ReviewCheck,
@@ -17,6 +17,7 @@ import {
 import { detectStepRouting } from "../queue-scan.js";
 import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 
 /**
  * Scan review-type states and transition issues whose PR check condition is met.
@@ -171,6 +172,50 @@ export async function reviewPass(opts: {
       }
 
       if (!conditionMet) continue;
+
+      // Optional CI gate (opt-in): do not finalize/merge until CI is green.
+      if (workflow.ciGating) {
+        const { status: ci, attempts } = await getCiStatusWithRetry(provider, issue.iid, 3);
+        const ciReason = ciDiagnostics(ci);
+
+        if (ci.state === CiState.PENDING) {
+          await auditLog(workspaceDir, "review_ci_pending", {
+            project: projectName,
+            issueId: issue.iid,
+            state: state.label,
+            attempts,
+            pendingChecks: ci.pendingChecks,
+            reason: ciReason,
+          });
+          continue; // keep issue in To Review until CI completes
+        }
+
+        if (ci.state === CiState.FAIL || ci.state === CiState.UNKNOWN) {
+          const failTransition = state.on[WorkflowEvent.CHANGES_REQUESTED] ?? state.on[WorkflowEvent.MERGE_FAILED];
+          if (failTransition) {
+            const targetKey = typeof failTransition === "string" ? failTransition : failTransition.target;
+            const targetState = workflow.states[targetKey];
+            if (targetState) {
+              await provider.transitionLabel(issue.iid, state.label, targetState.label);
+              try { await provider.addComment(issue.iid, `⚠️ CI gate blocked auto-merge: ${ciReason}`); } catch { /* best effort */ }
+              await auditLog(workspaceDir, "review_transition", {
+                project: projectName,
+                issueId: issue.iid,
+                from: state.label,
+                to: targetState.label,
+                reason: ci.state === CiState.FAIL ? "ci_failed" : "ci_unknown",
+                attempts,
+                failedChecks: ci.failedChecks,
+                pendingChecks: ci.pendingChecks,
+                ciSummary: ci.summary,
+                prUrl: status.url,
+              });
+              transitions++;
+              continue;
+            }
+          }
+        }
+      }
 
       // Find the success transition — use the APPROVED event (matches check condition)
       const successEvent = Object.keys(state.on).find(
