@@ -75,6 +75,8 @@ export class TestProvider implements IssueProvider {
   mergePrFailures = new Set<number>();
   /** PR diffs per issue (for reviewer tests). */
   prDiffs = new Map<number, string>();
+  /** Dependency graph: issue -> blocker issue IDs. */
+  dependencies = new Map<number, number[]>();
   /** All calls, in order. */
   calls: ProviderCall[] = [];
 
@@ -110,6 +112,11 @@ export class TestProvider implements IssueProvider {
     this.prStatuses.set(issueId, status);
   }
 
+  /** Set dependency blockers for an issue (issue is blocked by these issue IDs). */
+  setDependencies(issueId: number, blockerIssueIds: number[]): void {
+    this.dependencies.set(issueId, [...blockerIssueIds]);
+  }
+
   /** Get calls filtered by method name. */
   callsTo<M extends ProviderCall["method"]>(
     method: M,
@@ -132,6 +139,7 @@ export class TestProvider implements IssueProvider {
     this.mergedMrUrls.clear();
     this.mergePrFailures.clear();
     this.prDiffs.clear();
+    this.dependencies.clear();
     this.calls = [];
     this.nextIssueId = 1;
   }
@@ -179,6 +187,31 @@ export class TestProvider implements IssueProvider {
   async listIssuesByLabel(label: StateLabel): Promise<Issue[]> {
     this.calls.push({ method: "listIssuesByLabel", args: { label } });
     return [...this.issues.values()].filter((i) => i.labels.includes(label));
+  }
+
+  async getDependencyBlockedMap(issueIds: number[]): Promise<Map<number, boolean>> {
+    const out = new Map<number, boolean>();
+
+    for (const issueId of issueIds) {
+      const blockers = this.dependencies.get(issueId) ?? [];
+      if (blockers.length === 0) {
+        out.set(issueId, false);
+        continue;
+      }
+
+      const blocked = blockers.some((blockerId) => {
+        const blocker = this.issues.get(blockerId);
+        if (!blocker) return true; // unknown blocker => fail closed
+
+        const hasRejected = blocker.labels.some((l) => l.toLowerCase() === "rejected");
+        const isClosed = blocker.state.toLowerCase() === "closed";
+        return hasRejected || !isClosed;
+      });
+
+      out.set(issueId, blocked);
+    }
+
+    return out;
   }
 
   async listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]> {
