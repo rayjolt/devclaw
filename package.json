@@ -23,7 +23,7 @@
     "multi-project"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "openclaw": {
     "extensions": [
@@ -46,7 +46,16 @@
     "build": "node build.mjs",
     "check": "tsc --noEmit",
     "watch": "tsc --noEmit --watch",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "npm run test:core",
+    "lint": "npm run check",
+    "format": "prettier --write README.md .github/workflows/*.yml package.json openclaw.plugin.json",
+    "format-check": "prettier --check README.md .github/workflows/*.yml package.json openclaw.plugin.json",
+    "prepare": "husky",
+    "validate": "npm run format-check && npm run lint && npm run build && npm run test",
+    "test:core": "tsx --test $(find lib -name \"*.test.ts\" ! -name \"projects.test.ts\" ! -name \"pipeline.e2e.test.ts\" ! -name \"health.test.ts\")",
+    "test:extended": "tsx --test lib/projects/projects.test.ts lib/services/pipeline.e2e.test.ts lib/services/heartbeat/health.test.ts",
+    "test:all": "npm run test:core && npm run test:extended"
   },
   "peerDependencies": {
     "openclaw": "^2026.2.21"
@@ -58,6 +67,18 @@
     "typescript": "^5.9.3",
     "yaml": "^2.8.2",
     "unique-names-generator": "^4.7.1",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "tsx": "^4.20.5",
+    "prettier": "^3.6.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs}": [
+      "prettier --write"
+    ],
+    "*.{md,json,yml,yaml}": [
+      "prettier --write"
+    ]
   }
 }
