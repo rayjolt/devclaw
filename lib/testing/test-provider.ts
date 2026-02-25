@@ -10,9 +10,9 @@ import type {
   StateLabel,
   IssueComment,
   PrStatus,
-  type CiStatus,
-  CiState,
+  CiStatus,
 } from "../providers/provider.js";
+import { CiState } from "../providers/provider.js";
 import { getStateLabels } from "../workflow/index.js";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../workflow/index.js";
 

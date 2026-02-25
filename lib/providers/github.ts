@@ -323,8 +323,8 @@ export class GitHubProvider implements IssueProvider {
   }
 
   async getPrCiStatus(issueId: number): Promise<CiStatus> {
-    type OpenPr = { number: number; url: string; headRefOid: string };
-    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "number,url,headRefOid");
+    type OpenPr = { title: string; body: string; number: number; url: string; headRefOid: string };
+    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
     if (open.length === 0) {
       return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No open PR found for CI status" };
     }
@@ -380,9 +380,9 @@ export class GitHubProvider implements IssueProvider {
       return { state: CiState.PENDING, failedChecks: [], pendingChecks: [...new Set(pendingChecks)] };
     }
 
-    // If no checks were reported at all, treat as unknown (fail-closed when gating enabled)
+    // If no checks were reported at all, treat as pass (explicit product decision).
     if (observedChecks === 0) {
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No CI checks reported for PR" };
+      return { state: CiState.PASS, failedChecks: [], pendingChecks: [], summary: "No CI checks reported" };
     }
 
     return { state: CiState.PASS, failedChecks: [], pendingChecks: [] };

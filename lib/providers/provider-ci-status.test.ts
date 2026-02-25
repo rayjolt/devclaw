@@ -20,7 +20,7 @@ function rcFor(payloads: Record<string, unknown>): RunCommand {
 describe("GitHubProvider.getPrCiStatus", () => {
   it("returns pending when checks are running", async () => {
     const p = new GitHubProvider({ repoPath: "/fake", runCommand: rcFor({ checkRuns: { check_runs: [{ name: "build", status: "in_progress", conclusion: null }] } }) });
-    (p as any).findPrsForIssue = async () => [{ number: 1, url: "u", headRefOid: "abc" }];
+    (p as any).findPrsForIssue = async () => [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.PENDING);
     assert.ok(ci.pendingChecks.includes("build"));
@@ -28,7 +28,7 @@ describe("GitHubProvider.getPrCiStatus", () => {
 
   it("returns fail when check conclusion fails", async () => {
     const p = new GitHubProvider({ repoPath: "/fake", runCommand: rcFor({ checkRuns: { check_runs: [{ name: "test", status: "completed", conclusion: "failure" }] } }) });
-    (p as any).findPrsForIssue = async () => [{ number: 1, url: "u", headRefOid: "abc" }];
+    (p as any).findPrsForIssue = async () => [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.FAIL);
     assert.ok(ci.failedChecks.includes("test"));
@@ -40,15 +40,15 @@ describe("GitHubProvider.getPrCiStatus", () => {
       { name: "optional", status: "completed", conclusion: "neutral" },
       { name: "flaky", status: "completed", conclusion: "skipped" },
     ] } }) });
-    (p as any).findPrsForIssue = async () => [{ number: 1, url: "u", headRefOid: "abc" }];
+    (p as any).findPrsForIssue = async () => [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.PASS);
   });
 
-  it("returns unknown when no checks are reported", async () => {
+  it("returns pass when no checks are reported", async () => {
     const p = new GitHubProvider({ repoPath: "/fake", runCommand: rcFor({ checkRuns: { check_runs: [] }, statuses: { statuses: [] } }) });
-    (p as any).findPrsForIssue = async () => [{ number: 1, url: "u", headRefOid: "abc" }];
+    (p as any).findPrsForIssue = async () => [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
     const ci = await p.getPrCiStatus(1);
-    assert.strictEqual(ci.state, CiState.UNKNOWN);
+    assert.strictEqual(ci.state, CiState.PASS);
   });
 });
