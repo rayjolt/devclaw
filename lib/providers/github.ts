@@ -6,6 +6,7 @@ import {
   type Issue,
   type StateLabel,
   type IssueComment,
+  type IssueDependencies,
   type PrStatus,
   type PrReviewComment,
   type CiStatus,
@@ -228,6 +229,47 @@ export class GitHubProvider implements IssueProvider {
   async getIssue(issueId: number): Promise<Issue> {
     const raw = await this.gh(["issue", "view", String(issueId), "--json", "number,title,body,labels,state,url"]);
     return toIssue(JSON.parse(raw) as GhIssue);
+  }
+
+  async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+    const repo = await this.getRepoInfo();
+    if (!repo) throw new Error("Unable to resolve repository owner/name for dependency query");
+
+    const query = `{
+      repository(owner: "${repo.owner}", name: "${repo.name}") {
+        issue(number: ${issueId}) {
+          trackedInIssues(first: 100) {
+            nodes { number title state url }
+          }
+          trackedIssues(first: 100) {
+            nodes { number title state url }
+          }
+        }
+      }
+    }`;
+
+    const raw = await this.gh(["api", "graphql", "-f", `query=${query}`]);
+    const data = JSON.parse(raw);
+    const issue = data?.data?.repository?.issue;
+    if (!issue) throw new Error(`Issue #${issueId} not found in repository ${repo.owner}/${repo.name}`);
+
+    const blockers = (issue.trackedInIssues?.nodes ?? []).map((dep: any) => ({
+      iid: dep.number,
+      title: dep.title ?? "",
+      state: dep.state ?? "",
+      web_url: dep.url ?? "",
+      relation: "blocked_by" as const,
+    }));
+
+    const dependents = (issue.trackedIssues?.nodes ?? []).map((dep: any) => ({
+      iid: dep.number,
+      title: dep.title ?? "",
+      state: dep.state ?? "",
+      web_url: dep.url ?? "",
+      relation: "blocks" as const,
+    }));
+
+    return { issueId, blockers, dependents };
   }
 
   async listComments(issueId: number): Promise<IssueComment[]> {
