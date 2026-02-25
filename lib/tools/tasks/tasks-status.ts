@@ -11,8 +11,67 @@ import { log as auditLog } from "../../audit.js";
 import { getStateLabelsByType } from "../../services/queue.js";
 import { requireWorkspaceDir, resolveChannelId, resolveProject, resolveProvider } from "../helpers.js";
 import { loadConfig } from "../../config/index.js";
+import type { IssueDependency, IssueProvider } from "../../providers/provider.js";
+import { findStateByLabel } from "../../workflow/index.js";
 
-type IssueSummary = { id: number; title: string; url: string };
+type IssueSummary = {
+  id: number;
+  title: string;
+  url: string;
+  blocked?: boolean;
+  blockerIds?: number[];
+  blockedReason?: string;
+  dependencyLookupFailed?: boolean;
+};
+
+type BlockedMeta = {
+  blocked: boolean;
+  blockerIds: number[];
+  blockedReason: string;
+  dependencyLookupFailed?: boolean;
+};
+
+export function isBlockingDependency(blocker: IssueDependency, workflow: Awaited<ReturnType<typeof loadConfig>>["workflow"]): boolean {
+  const labels = blocker.labels ?? [];
+  if (labels.some((l) => l.toLowerCase() === "rejected")) return true;
+
+  const hasTerminalLabel = labels.some((l) => {
+    const state = findStateByLabel(workflow, l);
+    return state?.type === "terminal";
+  });
+  if (hasTerminalLabel) return false;
+
+  const state = blocker.state.toLowerCase();
+  const closedLike = state === "closed" || state === "done" || state === "merged";
+  return !closedLike;
+}
+
+export async function getBlockedMeta(
+  provider: Pick<IssueProvider, "getIssueDependencies">,
+  issueId: number,
+  workflow: Awaited<ReturnType<typeof loadConfig>>["workflow"],
+): Promise<BlockedMeta> {
+  try {
+    const deps = await provider.getIssueDependencies(issueId);
+    const unresolved = deps.blockers.filter((b) => isBlockingDependency(b, workflow));
+    const blockerIds = unresolved.map((b) => b.iid);
+    if (blockerIds.length === 0) {
+      return { blocked: false, blockerIds: [], blockedReason: "No unresolved blockers" };
+    }
+    return {
+      blocked: true,
+      blockerIds,
+      blockedReason: `Blocked by issue(s): ${blockerIds.map((id) => `#${id}`).join(", ")}`,
+    };
+  } catch {
+    return {
+      blocked: true,
+      blockerIds: [],
+      blockedReason: "Blocked (fail-closed): dependency lookup failed",
+      dependencyLookupFailed: true,
+    };
+  }
+}
 
 export function createTasksStatusTool(ctx: PluginContext) {
   return (toolCtx: ToolContext) => ({
@@ -66,9 +125,22 @@ export function createTasksStatusTool(ctx: PluginContext) {
       const queue: Record<string, { count: number; issues: IssueSummary[] }> = {};
       for (const { label } of statesByType.queue) {
         const issues = await provider.listIssues({ label, state: "open" }).catch(() => []);
+        const summaries: IssueSummary[] = [];
+        for (const i of issues) {
+          const blockedMeta = await getBlockedMeta(provider, i.iid, workflow);
+          summaries.push({
+            id: i.iid,
+            title: i.title,
+            url: i.web_url,
+            blocked: blockedMeta.blocked,
+            blockerIds: blockedMeta.blockerIds,
+            blockedReason: blockedMeta.blockedReason,
+            dependencyLookupFailed: blockedMeta.dependencyLookupFailed,
+          });
+        }
         queue[label] = {
           count: issues.length,
-          issues: issues.map((i) => ({ id: i.iid, title: i.title, url: i.web_url })),
+          issues: summaries,
         };
       }
 
