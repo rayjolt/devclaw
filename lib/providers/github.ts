@@ -224,10 +224,10 @@ export class GitHubProvider implements IssueProvider {
       repository(owner: "${repo.owner}", name: "${repo.name}") {
         issue(number: ${issueId}) {
           trackedInIssues(first: 100) {
-            nodes { number title state url }
+            nodes { number title state url labels(first: 20) { nodes { name } } }
           }
           trackedIssues(first: 100) {
-            nodes { number title state url }
+            nodes { number title state url labels(first: 20) { nodes { name } } }
           }
         }
       }
@@ -243,6 +243,7 @@ export class GitHubProvider implements IssueProvider {
       title: dep.title ?? "",
       state: dep.state ?? "",
       web_url: dep.url ?? "",
+      labels: (dep.labels?.nodes ?? []).map((l: any) => l.name),
       relation: "blocked_by" as const,
     }));
 
@@ -251,6 +252,7 @@ export class GitHubProvider implements IssueProvider {
       title: dep.title ?? "",
       state: dep.state ?? "",
       web_url: dep.url ?? "",
+      labels: (dep.labels?.nodes ?? []).map((l: any) => l.name),
       relation: "blocks" as const,
     }));
 
