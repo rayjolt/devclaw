@@ -45,10 +45,10 @@ describe("GitHubProvider.getPrCiStatus", () => {
     assert.strictEqual(ci.state, CiState.PASS);
   });
 
-  it("returns pass when no checks are reported", async () => {
+  it("returns unknown when no checks are reported (fail-closed policy)", async () => {
     const p = new GitHubProvider({ repoPath: "/fake", runCommand: rcFor({ checkRuns: { check_runs: [] }, statuses: { statuses: [] } }) });
     (p as any).findPrsForIssue = async () => [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
     const ci = await p.getPrCiStatus(1);
-    assert.strictEqual(ci.state, CiState.PASS);
+    assert.strictEqual(ci.state, CiState.UNKNOWN);
   });
 });
