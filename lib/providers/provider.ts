@@ -29,6 +29,30 @@ export type IssueComment = {
   created_at: string;
 };
 
+/**
+ * Provider-agnostic dependency edge for a single related issue.
+ *
+ * `relation` is from the perspective of the queried issue:
+ * - "blocks": this issue blocks the related issue (related is dependent)
+ * - "blocked_by": this issue is blocked by the related issue (related is blocker)
+ */
+export type IssueDependency = {
+  iid: number;
+  title: string;
+  state: string;
+  web_url: string;
+  relation: "blocks" | "blocked_by";
+};
+
+/**
+ * Normalized dependency graph slice for one issue.
+ */
+export type IssueDependencies = {
+  issueId: number;
+  blockers: IssueDependency[];
+  dependents: IssueDependency[];
+};
+
 /** Built-in PR states. */
 export const PrState = {
   OPEN: "open",
@@ -78,6 +102,11 @@ export interface IssueProvider {
   /** List issues with optional filters. Provider-agnostic — future Jira/Linear/Trello can map to native queries. */
   listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]>;
   getIssue(issueId: number): Promise<Issue>;
+  /**
+   * Get normalized dependency graph relations for an issue.
+   * Implementations should throw on provider/API failures so callers can retry/fail-closed.
+   */
+  getIssueDependencies(issueId: number): Promise<IssueDependencies>;
   listComments(issueId: number): Promise<IssueComment[]>;
   transitionLabel(issueId: number, from: StateLabel, to: StateLabel): Promise<void>;
   addLabel(issueId: number, label: string): Promise<void>;
