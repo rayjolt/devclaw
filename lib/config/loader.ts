@@ -178,6 +178,7 @@ function resolve(config: DevClawConfig): ResolvedConfig {
     initial: config.workflow?.initial ?? DEFAULT_WORKFLOW.initial,
     reviewPolicy: config.workflow?.reviewPolicy ?? DEFAULT_WORKFLOW.reviewPolicy,
     testPolicy: config.workflow?.testPolicy ?? DEFAULT_WORKFLOW.testPolicy,
+    ciGating: config.workflow?.ciGating ?? DEFAULT_WORKFLOW.ciGating,
     roleExecution: config.workflow?.roleExecution ?? DEFAULT_WORKFLOW.roleExecution,
     states: { ...DEFAULT_WORKFLOW.states, ...config.workflow?.states },
   };

@@ -8,6 +8,8 @@ import {
   type IssueComment,
   type PrStatus,
   type PrReviewComment,
+  type CiStatus,
+  CiState,
   PrState,
 } from "./provider.js";
 import type { RunCommand } from "../context.js";
@@ -226,6 +228,15 @@ export class GitLabProvider implements IssueProvider {
     const closed = mrs.find((mr) => mr.state === "closed");
     if (closed) return { state: PrState.CLOSED, url: closed.web_url, title: closed.title, sourceBranch: closed.source_branch };
     return { state: PrState.CLOSED, url: null };
+  }
+
+  async getPrCiStatus(_issueId: number): Promise<CiStatus> {
+    return {
+      state: CiState.UNKNOWN,
+      failedChecks: [],
+      pendingChecks: [],
+      summary: "GitLab CI status integration not implemented yet",
+    };
   }
 
   /** Check if an MR has unresolved discussion threads (proxy for changes requested). */
