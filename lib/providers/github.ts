@@ -380,9 +380,9 @@ export class GitHubProvider implements IssueProvider {
       return { state: CiState.PENDING, failedChecks: [], pendingChecks: [...new Set(pendingChecks)] };
     }
 
-    // If no checks were reported at all, treat as pass (explicit product decision).
+    // If no checks were reported at all, treat as unknown (fail-closed policy).
     if (observedChecks === 0) {
-      return { state: CiState.PASS, failedChecks: [], pendingChecks: [], summary: "No CI checks reported" };
+      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No CI checks reported for PR" };
     }
 
     return { state: CiState.PASS, failedChecks: [], pendingChecks: [] };
