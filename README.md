@@ -494,6 +494,44 @@ You can also use the [CLI wizard or non-interactive setup](docs/ONBOARDING.md#st
 
 ---
 
+## Development quality gates
+
+This repository enforces quality checks both locally and in CI.
+
+### Local pre-commit checks
+
+We use [husky](https://typicode.github.io/husky/) + [lint-staged](https://github.com/lint-staged/lint-staged) for fast staged-file checks.
+
+```bash
+npm install
+```
+
+After install, Git hooks are set up automatically via `prepare`.
+
+### Run checks locally
+
+```bash
+npm run format-check   # formatting validation
+npm run lint           # lint rules
+npm run build          # production build (+ type-check)
+npm run test           # test suite
+npm run validate       # all gates in CI order
+```
+
+### CI enforcement
+
+GitHub Actions runs on every pull request and push to `main` (Node 22):
+
+1. `npm ci`
+2. `npm run format-check`
+3. `npm run lint`
+4. `npm run build`
+5. `npm run test`
+
+Any failing step fails the workflow, making checks ready for branch protection rules.
+
+---
+
 ## The toolbox
 
 DevClaw gives the orchestrator 23 tools. These aren't just convenience wrappers — they're **guardrails**. Each tool encodes a complex multi-step operation into a single atomic call. The agent provides intent, the plugin handles mechanics. The agent physically cannot skip a label transition, forget to update state, or dispatch to the wrong session — those decisions are made by deterministic code, not LLM reasoning.
