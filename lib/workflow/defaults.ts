@@ -16,6 +16,7 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
   initial: "planning",
   reviewPolicy: ReviewPolicy.HUMAN,
   testPolicy: TestPolicy.SKIP,
+  ciGating: false,
   roleExecution: ExecutionMode.PARALLEL,
   states: {
     // ── Main pipeline (happy path) ──────────────────────────────

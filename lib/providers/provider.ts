@@ -50,6 +50,25 @@ export type PrStatus = {
   sourceBranch?: string;
   /** false = has merge conflicts. undefined = unknown or not applicable. */
   mergeable?: boolean;
+  /** Provider-specific PR number/IID when available (used for CI queries). */
+  prNumber?: number;
+  /** Provider-specific head SHA/commit when available (used for CI queries). */
+  headSha?: string;
+};
+
+export const CiState = {
+  PASS: "pass",
+  FAIL: "fail",
+  PENDING: "pending",
+  UNKNOWN: "unknown",
+} as const;
+export type CiState = (typeof CiState)[keyof typeof CiState];
+
+export type CiStatus = {
+  state: CiState;
+  failedChecks: string[];
+  pendingChecks: string[];
+  summary?: string;
 };
 
 /** A review comment on a PR/MR. */
@@ -86,6 +105,8 @@ export interface IssueProvider {
   reopenIssue(issueId: number): Promise<void>;
   getMergedMRUrl(issueId: number): Promise<string | null>;
   getPrStatus(issueId: number): Promise<PrStatus>;
+  /** Get normalized CI status for the PR/MR linked to an issue. */
+  getPrCiStatus(issueId: number): Promise<CiStatus>;
   mergePr(issueId: number): Promise<void>;
   getPrDiff(issueId: number): Promise<string | null>;
   /** Get review comments on the PR linked to an issue. */
