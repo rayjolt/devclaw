@@ -9,6 +9,7 @@ import type {
   Issue,
   StateLabel,
   IssueComment,
+  IssueDependencies,
   PrStatus,
 } from "../providers/provider.js";
 import { getStateLabels } from "../workflow/index.js";
@@ -33,6 +34,7 @@ export type ProviderCall =
   | { method: "listIssuesByLabel"; args: { label: StateLabel } }
   | { method: "listIssues"; args: { label?: string; state?: string } }
   | { method: "getIssue"; args: { issueId: number } }
+  | { method: "getIssueDependencies"; args: { issueId: number } }
   | { method: "listComments"; args: { issueId: number } }
   | {
       method: "transitionLabel";
@@ -189,6 +191,11 @@ export class TestProvider implements IssueProvider {
     const issue = this.issues.get(issueId);
     if (!issue) throw new Error(`Issue #${issueId} not found in TestProvider`);
     return issue;
+  }
+
+  async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+    this.calls.push({ method: "getIssueDependencies", args: { issueId } });
+    return { issueId, blockers: [], dependents: [] };
   }
 
   async listComments(issueId: number): Promise<IssueComment[]> {
