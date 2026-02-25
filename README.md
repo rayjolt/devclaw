@@ -501,6 +501,7 @@ This repository enforces quality checks both locally and in CI.
 ### Local pre-commit checks
 
 We use [husky](https://typicode.github.io/husky/) + [lint-staged](https://github.com/lint-staged/lint-staged) for fast staged-file checks.
+Pre-commit validates staged source and config/docs files with Prettier (`*.ts,*.tsx,*.js,*.mjs,*.cjs,*.md,*.json,*.yml,*.yaml`).
 
 ```bash
 npm install
@@ -514,9 +515,18 @@ After install, Git hooks are set up automatically via `prepare`.
 npm run format-check   # formatting validation
 npm run lint           # lint rules
 npm run build          # production build (+ type-check)
-npm run test           # test suite
-npm run validate       # all gates in CI order
+npm run test           # core CI test suite
+npm run test:extended  # currently unstable/long-running suites
+npm run test:all       # core + extended
+npm run validate       # all CI gates in order
 ```
+
+`npm test` intentionally runs the deterministic **core** suite used by CI.
+The following suites are tracked separately in `test:extended` because they are currently unstable in baseline and would make CI flaky:
+
+- `lib/projects/projects.test.ts`
+- `lib/services/pipeline.e2e.test.ts`
+- `lib/services/heartbeat/health.test.ts`
 
 ### CI enforcement
 
