@@ -41,7 +41,7 @@ export type IssueDependency = {
   title: string;
   state: string;
   web_url: string;
-  /** Optional labels when provider can include them in dependency query payload. */
+  /** Optional labels when provider can include them in dependency payloads. */
   labels?: string[];
   relation: "blocks" | "blocked_by";
 };
