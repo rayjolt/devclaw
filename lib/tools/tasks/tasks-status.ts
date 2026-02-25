@@ -11,8 +11,34 @@ import { log as auditLog } from "../../audit.js";
 import { getStateLabelsByType } from "../../services/queue.js";
 import { requireWorkspaceDir, resolveChannelId, resolveProject, resolveProvider } from "../helpers.js";
 import { loadConfig } from "../../config/index.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "../../services/ci-gate.js";
+import { CiState, type IssueProvider } from "../../providers/provider.js";
 
-type IssueSummary = { id: number; title: string; url: string };
+type IssueSummary = {
+  id: number;
+  title: string;
+  url: string;
+  ciState?: string;
+  ciReason?: string;
+  ciFailedChecks?: string[];
+  ciPendingChecks?: string[];
+};
+
+async function withCiSummary(provider: IssueProvider, issue: { iid: number; title: string; web_url: string }, enabled: boolean): Promise<IssueSummary> {
+  const base: IssueSummary = { id: issue.iid, title: issue.title, url: issue.web_url };
+  if (!enabled) return base;
+
+  const { status: ci } = await getCiStatusWithRetry(provider, issue.iid, 3);
+  if (ci.state === CiState.PASS) return { ...base, ciState: ci.state };
+
+  return {
+    ...base,
+    ciState: ci.state,
+    ciReason: ciDiagnostics(ci),
+    ciFailedChecks: ci.failedChecks,
+    ciPendingChecks: ci.pendingChecks,
+  };
+}
 
 export function createTasksStatusTool(ctx: PluginContext) {
   return (toolCtx: ToolContext) => ({
@@ -57,18 +83,22 @@ export function createTasksStatusTool(ctx: PluginContext) {
       const active: Record<string, { count: number; issues: IssueSummary[] }> = {};
       for (const { label } of statesByType.active) {
         const issues = await provider.listIssues({ label, state: "open" }).catch(() => []);
+        const summaries: IssueSummary[] = [];
+        for (const i of issues) summaries.push(await withCiSummary(provider, i, !!workflow.ciGating));
         active[label] = {
           count: issues.length,
-          issues: issues.map((i) => ({ id: i.iid, title: i.title, url: i.web_url })),
+          issues: summaries,
         };
       }
 
       const queue: Record<string, { count: number; issues: IssueSummary[] }> = {};
       for (const { label } of statesByType.queue) {
         const issues = await provider.listIssues({ label, state: "open" }).catch(() => []);
+        const summaries: IssueSummary[] = [];
+        for (const i of issues) summaries.push(await withCiSummary(provider, i, !!workflow.ciGating));
         queue[label] = {
           count: issues.length,
-          issues: issues.map((i) => ({ id: i.iid, title: i.title, url: i.web_url })),
+          issues: summaries,
         };
       }
 

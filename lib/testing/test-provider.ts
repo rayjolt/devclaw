@@ -10,7 +10,9 @@ import type {
   StateLabel,
   IssueComment,
   PrStatus,
+  CiStatus,
 } from "../providers/provider.js";
+import { CiState } from "../providers/provider.js";
 import { getStateLabels } from "../workflow/index.js";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../workflow/index.js";
 
@@ -44,6 +46,7 @@ export type ProviderCall =
   | { method: "reopenIssue"; args: { issueId: number } }
   | { method: "getMergedMRUrl"; args: { issueId: number } }
   | { method: "getPrStatus"; args: { issueId: number } }
+  | { method: "getPrCiStatus"; args: { issueId: number } }
   | { method: "mergePr"; args: { issueId: number } }
   | { method: "getPrDiff"; args: { issueId: number } }
   | { method: "getPrReviewComments"; args: { issueId: number } }
@@ -66,6 +69,8 @@ export class TestProvider implements IssueProvider {
   prStatuses = new Map<number, PrStatus>();
   /** Merged MR URLs per issue. */
   mergedMrUrls = new Map<number, string>();
+  /** CI status overrides per issue. */
+  prCiStatuses = new Map<number, CiStatus>();
   /** Issue IDs where mergePr should fail (simulates merge conflicts). */
   mergePrFailures = new Set<number>();
   /** PR diffs per issue (for reviewer tests). */
@@ -123,6 +128,7 @@ export class TestProvider implements IssueProvider {
     this.comments.clear();
     this.labels.clear();
     this.prStatuses.clear();
+    this.prCiStatuses.clear();
     this.mergedMrUrls.clear();
     this.mergePrFailures.clear();
     this.prDiffs.clear();
@@ -246,6 +252,12 @@ export class TestProvider implements IssueProvider {
   async getPrStatus(issueId: number): Promise<PrStatus> {
     this.calls.push({ method: "getPrStatus", args: { issueId } });
     return this.prStatuses.get(issueId) ?? { state: "closed", url: null };
+  }
+
+  async getPrCiStatus(issueId: number): Promise<CiStatus> {
+    this.calls.push({ method: "getPrCiStatus", args: { issueId } });
+    return this.prCiStatuses.get(issueId)
+      ?? { state: CiState.PASS, failedChecks: [], pendingChecks: [], summary: "test-provider default pass" };
   }
 
   async mergePr(issueId: number): Promise<void> {

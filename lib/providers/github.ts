@@ -8,6 +8,8 @@ import {
   type IssueComment,
   type PrStatus,
   type PrReviewComment,
+  type CiStatus,
+  CiState,
   PrState,
 } from "./provider.js";
 import type { RunCommand } from "../context.js";
@@ -318,6 +320,72 @@ export class GitHubProvider implements IssueProvider {
       return { state: PrState.CLOSED, url: closedPr.url, title: closedPr.title, sourceBranch: closedPr.headRefName };
     }
     return { state: PrState.CLOSED, url: null };
+  }
+
+  async getPrCiStatus(issueId: number): Promise<CiStatus> {
+    type OpenPr = { title: string; body: string; number: number; url: string; headRefOid: string };
+    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
+    if (open.length === 0) {
+      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No open PR found for CI status" };
+    }
+
+    const pr = open[0];
+    const sha = pr.headRefOid;
+    if (!sha) {
+      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
+    }
+
+    const failedChecks: string[] = [];
+    const pendingChecks: string[] = [];
+    let observedChecks = 0;
+
+    // GitHub check-runs API
+    try {
+      const raw = await this.gh(["api", `repos/:owner/:repo/commits/${sha}/check-runs`]);
+      const data = JSON.parse(raw) as { check_runs?: Array<{ name: string; status: string; conclusion: string | null }> };
+      for (const run of data.check_runs ?? []) {
+        observedChecks++;
+        if (run.status !== "completed") {
+          pendingChecks.push(run.name);
+          continue;
+        }
+        const conclusion = (run.conclusion ?? "").toLowerCase();
+        if (["neutral", "skipped", "success"].includes(conclusion)) continue;
+        if (["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"].includes(conclusion)) {
+          failedChecks.push(run.name);
+        }
+      }
+    } catch {
+      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "Failed to query GitHub check-runs API" };
+    }
+
+    // Legacy commit status contexts API
+    try {
+      const raw = await this.gh(["api", `repos/:owner/:repo/commits/${sha}/status`]);
+      const data = JSON.parse(raw) as { statuses?: Array<{ context: string; state: string }> };
+      for (const status of data.statuses ?? []) {
+        observedChecks++;
+        const state = status.state?.toLowerCase();
+        if (state === "pending") pendingChecks.push(status.context);
+        else if (state === "failure" || state === "error") failedChecks.push(status.context);
+      }
+    } catch {
+      // best-effort; check-runs already queried
+    }
+
+    if (failedChecks.length > 0) {
+      return { state: CiState.FAIL, failedChecks: [...new Set(failedChecks)], pendingChecks: [...new Set(pendingChecks)] };
+    }
+    if (pendingChecks.length > 0) {
+      return { state: CiState.PENDING, failedChecks: [], pendingChecks: [...new Set(pendingChecks)] };
+    }
+
+    // If no checks were reported at all, treat as unknown (fail-closed policy).
+    if (observedChecks === 0) {
+      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No CI checks reported for PR" };
+    }
+
+    return { state: CiState.PASS, failedChecks: [], pendingChecks: [] };
   }
 
   /**

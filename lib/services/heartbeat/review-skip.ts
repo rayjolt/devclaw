@@ -9,7 +9,7 @@
  * Mirrors testSkipPass() in test-skip.ts — called by the heartbeat service.
  */
 import type { IssueProvider } from "../../providers/provider.js";
-import { PrState } from "../../providers/provider.js";
+import { CiState, PrState } from "../../providers/provider.js";
 import {
   Action,
   StateType,
@@ -20,6 +20,7 @@ import {
 import { detectStepRouting } from "../queue-scan.js";
 import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 
 /**
  * Scan review queue states and auto-merge + transition issues with review:skip.
@@ -76,6 +77,35 @@ export async function reviewSkipPass(opts: {
               }
               // No PR exists — skip merge (work may have been committed directly).
               if (!status.url) break;
+
+              if (workflow.ciGating) {
+                const { status: ci } = await getCiStatusWithRetry(provider, issue.iid, 3);
+                if (ci.state === CiState.PENDING) {
+                  await auditLog(workspaceDir, "review_skip_ci_pending", {
+                    project: projectName,
+                    issueId: issue.iid,
+                    reason: ciDiagnostics(ci),
+                    pendingChecks: ci.pendingChecks,
+                  });
+                  aborted = true;
+                  break;
+                }
+                if (ci.state === CiState.FAIL || ci.state === CiState.UNKNOWN) {
+                  const failedTransition = state.on?.[WorkflowEvent.CHANGES_REQUESTED] ?? state.on?.[WorkflowEvent.MERGE_FAILED];
+                  if (failedTransition) {
+                    const failedKey = typeof failedTransition === "string" ? failedTransition : failedTransition.target;
+                    const failedState = workflow.states[failedKey];
+                    if (failedState) {
+                      await provider.transitionLabel(issue.iid, state.label, failedState.label);
+                      try { await provider.addComment(issue.iid, `⚠️ CI gate blocked auto-merge: ${ciDiagnostics(ci)}`); } catch { /* best effort */ }
+                      transitions++;
+                    }
+                  }
+                  aborted = true;
+                  break;
+                }
+              }
+
               try {
                 await provider.mergePr(issue.iid);
                 onMerge?.(issue.iid, status.url, status.title, status.sourceBranch);

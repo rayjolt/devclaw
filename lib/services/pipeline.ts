@@ -4,13 +4,14 @@
  * Uses workflow config to determine transitions and side effects.
  */
 import type { PluginRuntime } from "openclaw/plugin-sdk";
-import type { StateLabel, IssueProvider } from "../providers/provider.js";
+import { CiState, type StateLabel, type IssueProvider } from "../providers/provider.js";
 import { deactivateWorker, loadProjectBySlug, getRoleWorker } from "../projects/index.js";
 import type { RunCommand } from "../context.js";
 import { notify, getNotificationConfig } from "../dispatch/notify.js";
 import { log as auditLog } from "../audit.js";
 import { loadConfig } from "../config/index.js";
 import { detectStepRouting } from "./queue-scan.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import {
   DEFAULT_WORKFLOW,
   Action,
@@ -92,6 +93,7 @@ export async function executeCompletion(opts: {
   let mergedPr = false;
   let prTitle: string | undefined;
   let sourceBranch: string | undefined;
+  let ciOverrideToLabel: string | null = null;
 
   // Execute pre-notification actions
   for (const action of rule.actions) {
@@ -123,6 +125,24 @@ export async function executeCompletion(opts: {
               sourceBranch = prStatus.sourceBranch;
             } catch { /* best-effort */ }
           }
+
+          if (workflow.ciGating) {
+            const { status: ci } = await getCiStatusWithRetry(provider, issueId, 3);
+            const reason = ciDiagnostics(ci);
+            if (ci.state === CiState.PENDING) {
+              ciOverrideToLabel = rule.from; // keep current state until CI completes
+              try { await provider.addComment(issueId, `⏳ CI gate: ${reason}`); } catch { /* best effort */ }
+              auditLog(workspaceDir, "pipeline_warning", { step: "mergePrCiPending", issue: issueId, role, reason }).catch(() => {});
+              break;
+            }
+            if (ci.state === CiState.FAIL || ci.state === CiState.UNKNOWN) {
+              ciOverrideToLabel = resolveCiFailureLabel(workflow, rule.from) ?? rule.from;
+              try { await provider.addComment(issueId, `⚠️ CI gate blocked completion: ${reason}`); } catch { /* best effort */ }
+              auditLog(workspaceDir, "pipeline_warning", { step: "mergePrCiBlocked", issue: issueId, role, reason, failedChecks: ci.failedChecks, pendingChecks: ci.pendingChecks }).catch(() => {});
+              break;
+            }
+          }
+
           await provider.mergePr(issueId);
           mergedPr = true;
         } catch (err) {
@@ -205,17 +225,25 @@ export async function executeCompletion(opts: {
   // Then execute post-transition actions (close/reopen)
   // Finally deactivate worker (last — ensures label is set even if deactivation fails)
   
-  await provider.transitionLabel(issueId, rule.from as StateLabel, rule.to as StateLabel);
+  const effectiveTo = ciOverrideToLabel ?? (rule.to as StateLabel);
+  const transitioned = effectiveTo !== rule.from;
+  if (transitioned) {
+    await provider.transitionLabel(issueId, rule.from as StateLabel, effectiveTo as StateLabel);
+  }
 
-  // Execute post-transition actions
-  for (const action of rule.actions) {
-    switch (action) {
-      case Action.CLOSE_ISSUE:
-        await provider.closeIssue(issueId);
-        break;
-      case Action.REOPEN_ISSUE:
-        await provider.reopenIssue(issueId);
-        break;
+  // Execute post-transition actions only on the primary success/failure rule path.
+  // If CI gating overrides/blocks the transition, side effects must not run.
+  const runPostActions = transitioned && effectiveTo === rule.to;
+  if (runPostActions) {
+    for (const action of rule.actions) {
+      switch (action) {
+        case Action.CLOSE_ISSUE:
+          await provider.closeIssue(issueId);
+          break;
+        case Action.REOPEN_ISSUE:
+          await provider.reopenIssue(issueId);
+          break;
+      }
     }
   }
 
@@ -265,15 +293,34 @@ export async function executeCompletion(opts: {
       announcement += `\n  - [#${t.id}: ${t.title}](${t.url})`;
     }
   }
-  announcement += `\n${nextState}.`;
+  const effectiveNextState = ciOverrideToLabel && ciOverrideToLabel !== rule.to
+    ? `CI gate applied (${rule.from} → ${ciOverrideToLabel})`
+    : nextState;
+
+  announcement += `\n${effectiveNextState}.`;
 
   return {
-    labelTransition: `${rule.from} → ${rule.to}`,
+    labelTransition: `${rule.from} → ${effectiveTo}`,
     announcement,
-    nextState,
+    nextState: effectiveNextState,
     prUrl,
     issueUrl: issue.web_url,
-    issueClosed: rule.actions.includes(Action.CLOSE_ISSUE),
-    issueReopened: rule.actions.includes(Action.REOPEN_ISSUE),
+    issueClosed: runPostActions && rule.actions.includes(Action.CLOSE_ISSUE),
+    issueReopened: runPostActions && rule.actions.includes(Action.REOPEN_ISSUE),
   };
+}
+
+function resolveCiFailureLabel(workflow: WorkflowConfig, fromLabel: string): string | null {
+  const state = Object.values(workflow.states).find((s) => s.label === fromLabel);
+  if (!state?.on) return null;
+
+  const candidates = ["CHANGES_REQUESTED", "REJECT", "FAIL", "MERGE_FAILED"];
+  for (const event of candidates) {
+    const transition = state.on[event];
+    if (!transition) continue;
+    const targetKey = typeof transition === "string" ? transition : transition.target;
+    const target = workflow.states[targetKey];
+    if (target) return target.label;
+  }
+  return null;
 }
