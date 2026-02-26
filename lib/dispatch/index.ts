@@ -183,6 +183,7 @@ export async function dispatchTask(
   }
 
   const sessionAction = existingSessionKey ? "send" : "spawn";
+  const dispatchAttempt = (slot.dispatchAttempt ?? 0) + 1;
 
   // Fetch comments to include in task context
   const comments = await provider.listComments(issueId);
@@ -356,6 +357,7 @@ export async function dispatchTask(
     role,
     level,
     slotIndex,
+    dispatchAttempt,
     orchestratorSessionKey: opts.sessionKey,
     workspaceDir,
     dispatchTimeoutMs: timeouts.dispatchMs,
@@ -373,6 +375,7 @@ export async function dispatchTask(
       sessionAction,
       fromLabel,
       name: botName,
+      dispatchAttempt,
     });
   } catch (err) {
     // Session is already dispatched — log warning but don't fail
@@ -426,6 +429,7 @@ async function recordWorkerState(
     sessionAction: "spawn" | "send";
     fromLabel?: string;
     name?: string;
+    dispatchAttempt: number;
   },
 ): Promise<void> {
   await activateWorker(workspaceDir, slug, role, {
@@ -436,6 +440,7 @@ async function recordWorkerState(
     previousLabel: opts.fromLabel,
     slotIndex,
     name: opts.name,
+    dispatchAttempt: opts.dispatchAttempt,
   });
 }
 
