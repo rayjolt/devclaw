@@ -478,6 +478,7 @@ export async function dispatchTask(
     sessionKey,
     fromLabel,
     toLabel,
+    acceptanceMode: acceptance.mode,
   });
 
   const announcement = buildAnnouncement(
@@ -596,6 +597,7 @@ async function auditDispatch(
     sessionKey: string;
     fromLabel: string;
     toLabel: string;
+    acceptanceMode?: DispatchAcceptance["mode"];
   },
 ): Promise<void> {
   await auditLog(workspaceDir, "dispatch_accepted", {
@@ -607,6 +609,7 @@ async function auditDispatch(
     sessionAction: opts.sessionAction,
     sessionKey: opts.sessionKey,
     labelTransition: `${opts.fromLabel} → ${opts.toLabel}`,
+    acceptanceMode: opts.acceptanceMode,
   });
   await auditLog(workspaceDir, "dispatch", {
     project: opts.project,
@@ -617,6 +620,7 @@ async function auditDispatch(
     sessionAction: opts.sessionAction,
     sessionKey: opts.sessionKey,
     labelTransition: `${opts.fromLabel} → ${opts.toLabel}`,
+    acceptanceMode: opts.acceptanceMode,
   });
   await auditLog(workspaceDir, "model_selection", {
     issue: opts.issueId,
@@ -657,5 +661,6 @@ async function auditDispatchFailure(
     status: opts.acceptance.status,
     runId: opts.acceptance.runId,
     reason: opts.acceptance.reason,
+    acceptanceMode: opts.acceptance.mode,
   });
 }
