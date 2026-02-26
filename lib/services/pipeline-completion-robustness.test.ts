@@ -137,6 +137,54 @@ describe("executeCompletion transition robustness", () => {
     );
   });
 
+  it("retries cleanup when retry starts with both old and new state labels", async () => {
+    const h = await createTestHarness({
+      workers: {
+        developer: { active: true, issueId: "22", level: "senior" },
+      },
+    });
+
+    h.provider.seedIssue({
+      iid: 22,
+      title: "Retry stale-label cleanup",
+      labels: ["Doing", "To Review"],
+    });
+
+    let attempts = 0;
+    const original = h.provider.transitionLabel.bind(h.provider);
+    h.provider.transitionLabel = async (...args) => {
+      attempts += 1;
+      if (attempts === 1)
+        throw new Error("provider temporarily unavailable during cleanup");
+      return original(...args);
+    };
+
+    const out = await executeCompletion({
+      workspaceDir: h.workspaceDir,
+      projectSlug: h.project.slug,
+      channels: h.project.channels,
+      role: "developer",
+      result: "done",
+      issueId: 22,
+      summary: "retry",
+      provider: h.provider,
+      repoPath: "/tmp/test-repo",
+      projectName: "test-project",
+      runCommand: h.runCommand,
+    });
+
+    assert.strictEqual(out.labelTransition, "Doing → To Review");
+    assert.strictEqual(out.transitionAttempts, 2);
+    assert.strictEqual(attempts, 2);
+
+    const issue = await h.provider.getIssue(22);
+    assert.ok(issue.labels.includes("To Review"));
+    assert.ok(
+      !issue.labels.includes("Doing"),
+      `labels=${issue.labels.join(",")}`,
+    );
+  });
+
   it("fails fast on stale/mismatched state precondition", async () => {
     const h = await createTestHarness({
       workers: {

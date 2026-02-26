@@ -26,6 +26,7 @@ import {
   DEFAULT_WORKFLOW,
   getCompletionEmoji,
   getCompletionRule,
+  getStateLabels,
   getNextStateDescription,
   resolveNotifyChannel,
   type CompletionRule,
@@ -247,6 +248,7 @@ export async function executeCompletion(opts: {
       issueId,
       from: rule.from as StateLabel,
       to: effectiveTo as StateLabel,
+      workflow,
       correlationId,
       workspaceDir,
       role,
@@ -413,6 +415,7 @@ async function transitionLabelWithVerification(opts: {
   issueId: number;
   from: StateLabel;
   to: StateLabel;
+  workflow: WorkflowConfig;
   correlationId: string;
   workspaceDir: string;
   role: string;
@@ -422,9 +425,15 @@ async function transitionLabelWithVerification(opts: {
 }> {
   const maxAttempts = 3;
   let lastError: unknown = null;
+  const stateLabels = getStateLabels(opts.workflow);
+  const staleStateLabels = (labels: string[]) =>
+    labels.filter(
+      (label) => stateLabels.includes(label as StateLabel) && label !== opts.to,
+    );
 
   const before = await opts.provider.getIssue(opts.issueId);
-  if (before.labels.includes(opts.to)) {
+  const staleBefore = staleStateLabels(before.labels);
+  if (before.labels.includes(opts.to) && staleBefore.length === 0) {
     await auditLog(opts.workspaceDir, "pipeline_transition_already_applied", {
       issue: opts.issueId,
       role: opts.role,
@@ -434,7 +443,7 @@ async function transitionLabelWithVerification(opts: {
     }).catch(() => {});
     return { attempts: 0, issue: before };
   }
-  if (!before.labels.includes(opts.from)) {
+  if (!before.labels.includes(opts.from) && !before.labels.includes(opts.to)) {
     throw new Error(
       `Completion transition precondition failed for issue #${opts.issueId}: expected current label "${opts.from}" or already-transitioned "${opts.to}", got [${before.labels.join(", ")}] [correlationId=${opts.correlationId}]`,
     );
@@ -447,6 +456,12 @@ async function transitionLabelWithVerification(opts: {
       if (!issue.labels.includes(opts.to)) {
         throw new Error(
           `Transition verification failed: issue #${opts.issueId} missing target label "${opts.to}" after transition`,
+        );
+      }
+      const staleAfter = staleStateLabels(issue.labels);
+      if (staleAfter.length > 0) {
+        throw new Error(
+          `Transition verification failed: issue #${opts.issueId} still has stale state labels [${staleAfter.join(", ")}] after transition`,
         );
       }
 
