@@ -52,6 +52,7 @@ import {
   ensureSessionFireAndForget,
   sendToAgent,
   shouldClearSession,
+  type DispatchAcceptance,
 } from "./session.js";
 import { acknowledgeComments, EYES_EMOJI } from "./acknowledge.js";
 
@@ -232,8 +233,117 @@ export async function dispatchTask(
     role,
   );
 
-  // ── Commitment point — transition label (issue leaves queue) ────────
-  await provider.transitionLabel(issueId, fromLabel, toLabel);
+  await auditLog(workspaceDir, "dispatch_attempt", {
+    project: project.name,
+    issue: issueId,
+    issueTitle,
+    role,
+    level,
+    sessionAction,
+    sessionKey,
+    fromLabel,
+    toLabel,
+    dispatchAttempt,
+  });
+
+  // Step 1: Ensure session exists (fire-and-forget)
+  const sessionLabel = formatSessionLabel(project.name, role, level, botName);
+  ensureSessionFireAndForget(
+    sessionKey,
+    model,
+    workspaceDir,
+    rc,
+    timeouts.sessionPatchMs,
+    sessionLabel,
+  );
+
+  // Step 2 (phase A): Attempt dispatch and require explicit acceptance
+  const acceptance = await sendToAgent(sessionKey, taskMessage, {
+    agentId,
+    projectName: project.name,
+    issueId,
+    role,
+    level,
+    slotIndex,
+    dispatchAttempt,
+    orchestratorSessionKey: opts.sessionKey,
+    workspaceDir,
+    dispatchTimeoutMs: timeouts.dispatchMs,
+    extraSystemPrompt: roleInstructions.trim() || undefined,
+    model,
+    runCommand: rc,
+  });
+
+  if (!acceptance.accepted) {
+    // Persist nonce progression so retries use a fresh idempotency key.
+    setInMemoryDispatchAttempt(
+      project,
+      role,
+      level,
+      slotIndex,
+      dispatchAttempt,
+    );
+    await updateSlot(workspaceDir, project.slug, role, level, slotIndex, {
+      dispatchAttempt,
+    }).catch(() => {});
+    await auditDispatchFailure(workspaceDir, {
+      project: project.name,
+      issueId,
+      role,
+      level,
+      fromLabel,
+      toLabel,
+      sessionKey,
+      dispatchAttempt,
+      acceptance,
+    });
+    throw new Error(
+      `dispatch ${acceptance.status}: ${acceptance.reason || "worker did not accept task"}`,
+    );
+  }
+
+  // Step 3 (phase B): transition label now that acceptance is confirmed
+  try {
+    await provider.transitionLabel(issueId, fromLabel, toLabel);
+  } catch (err) {
+    // Worker already accepted task. Mark slot active anyway to prevent duplicate pickups.
+    setInMemoryActiveState(project, role, level, slotIndex, {
+      issueId,
+      sessionKey,
+      previousLabel: fromLabel,
+      name: botName,
+      dispatchAttempt,
+    });
+    try {
+      await recordWorkerState(workspaceDir, project.slug, role, slotIndex, {
+        issueId,
+        level,
+        sessionKey,
+        sessionAction,
+        fromLabel,
+        name: botName,
+        dispatchAttempt,
+      });
+    } catch (stateErr) {
+      await auditLog(workspaceDir, "dispatch_warning", {
+        step: "recordWorkerState_after_transition_failure",
+        issue: issueId,
+        role,
+        sessionKey,
+        error: (stateErr as Error).message ?? String(stateErr),
+      });
+    }
+    await auditLog(workspaceDir, "dispatch_warning", {
+      step: "transitionLabel_after_accept",
+      issue: issueId,
+      role,
+      sessionKey,
+      error: (err as Error).message ?? String(err),
+    });
+    throw new Error(
+      `dispatch accepted but failed to transition ${fromLabel} → ${toLabel}: ${(err as Error).message ?? String(err)}`,
+    );
+  }
 
   // Mark issue + PR as managed and all consumed comments as seen (fire-and-forget)
   provider.reactToIssue(issueId, EYES_EMOJI).catch(() => {});
@@ -264,7 +374,6 @@ export async function dispatchTask(
     await provider.ensureLabel(roleLabel, getRoleLabelColor(role));
     await provider.addLabel(issueId, roleLabel);
 
-    // Step 1c: Apply review routing label when role produces reviewable work (best-effort)
     if (producesReviewableWork(workflow, role)) {
       const reviewLabel = resolveReviewRouting(
         workflow.reviewPolicy ?? ReviewPolicy.HUMAN,
@@ -277,7 +386,6 @@ export async function dispatchTask(
       await provider.addLabel(issueId, reviewLabel);
     }
 
-    // Step 1e: Apply test routing label when workflow has a test phase (best-effort)
     if (hasTestPhase(workflow)) {
       const testLabel = resolveTestRouting(
         workflow.testPolicy ?? TestPolicy.SKIP,
@@ -290,7 +398,6 @@ export async function dispatchTask(
       await provider.addLabel(issueId, testLabel);
     }
 
-    // Step 1d: Apply owner label if issue is unclaimed (auto-claim on pickup)
     if (opts.instanceName && !detectOwner(issue.labels)) {
       const ownerLabel = getOwnerLabel(opts.instanceName);
       await provider.ensureLabel(ownerLabel, OWNER_LABEL_COLOR);
@@ -300,8 +407,7 @@ export async function dispatchTask(
     // Best-effort — label failure must not abort dispatch
   }
 
-  // Step 2: Send notification early (before session dispatch which can timeout)
-  // This ensures users see the notification even if gateway is slow
+  // Step 4: Worker-start notification only after acceptance+transition
   const notifyConfig = getNotificationConfig(pluginConfig);
   const notifyTarget = resolveNotifyChannel(
     issue?.labels ?? [],
@@ -335,35 +441,6 @@ export async function dispatchTask(
       role,
       error: (err as Error).message ?? String(err),
     }).catch(() => {});
-  });
-
-  // Step 3: Ensure session exists (fire-and-forget — don't wait for gateway)
-  // Session key is deterministic, so we can proceed immediately
-  const sessionLabel = formatSessionLabel(project.name, role, level, botName);
-  ensureSessionFireAndForget(
-    sessionKey,
-    model,
-    workspaceDir,
-    rc,
-    timeouts.sessionPatchMs,
-    sessionLabel,
-  );
-
-  // Step 4: Send task to agent (fire-and-forget)
-  sendToAgent(sessionKey, taskMessage, {
-    agentId,
-    projectName: project.name,
-    issueId,
-    role,
-    level,
-    slotIndex,
-    dispatchAttempt,
-    orchestratorSessionKey: opts.sessionKey,
-    workspaceDir,
-    dispatchTimeoutMs: timeouts.dispatchMs,
-    extraSystemPrompt: roleInstructions.trim() || undefined,
-    model,
-    runCommand: rc,
   });
 
   // Step 5: Update worker state
@@ -417,6 +494,68 @@ export async function dispatchTask(
   return { sessionAction, sessionKey, level, model, announcement };
 }
 
+function ensureInMemorySlot(
+  project: Project,
+  role: string,
+  level: string,
+  slotIndex: number,
+): {
+  active: boolean;
+  issueId: string | null;
+  sessionKey: string | null;
+  startTime: string | null;
+  previousLabel?: string | null;
+  name?: string;
+  dispatchAttempt?: number;
+} {
+  if (!project.workers[role]) project.workers[role] = { levels: {} };
+  if (!project.workers[role]!.levels[level])
+    project.workers[role]!.levels[level] = [];
+  const slots = project.workers[role]!.levels[level]!;
+  while (slots.length <= slotIndex)
+    slots.push({
+      active: false,
+      issueId: null,
+      sessionKey: null,
+      startTime: null,
+    });
+  return slots[slotIndex]!;
+}
+
+function setInMemoryDispatchAttempt(
+  project: Project,
+  role: string,
+  level: string,
+  slotIndex: number,
+  dispatchAttempt: number,
+): void {
+  const slot = ensureInMemorySlot(project, role, level, slotIndex);
+  slot.dispatchAttempt = dispatchAttempt;
+}
+
+function setInMemoryActiveState(
+  project: Project,
+  role: string,
+  level: string,
+  slotIndex: number,
+  opts: {
+    issueId: number;
+    sessionKey: string;
+    previousLabel?: string;
+    name?: string;
+    dispatchAttempt: number;
+  },
+): void {
+  const slot = ensureInMemorySlot(project, role, level, slotIndex);
+  slot.active = true;
+  slot.issueId = String(opts.issueId);
+  slot.sessionKey = opts.sessionKey;
+  slot.startTime = new Date().toISOString();
+  slot.previousLabel = opts.previousLabel;
+  slot.name = opts.name;
+  slot.dispatchAttempt = opts.dispatchAttempt;
+}
+
 async function recordWorkerState(
   workspaceDir: string,
   slug: string,
@@ -459,6 +598,16 @@ async function auditDispatch(
     toLabel: string;
   },
 ): Promise<void> {
+  await auditLog(workspaceDir, "dispatch_accepted", {
+    project: opts.project,
+    issue: opts.issueId,
+    issueTitle: opts.issueTitle,
+    role: opts.role,
+    level: opts.level,
+    sessionAction: opts.sessionAction,
+    sessionKey: opts.sessionKey,
+    labelTransition: `${opts.fromLabel} → ${opts.toLabel}`,
+  });
   await auditLog(workspaceDir, "dispatch", {
     project: opts.project,
     issue: opts.issueId,
@@ -474,5 +623,39 @@ async function auditDispatch(
     role: opts.role,
     level: opts.level,
     model: opts.model,
+  });
+}
+
+async function auditDispatchFailure(
+  workspaceDir: string,
+  opts: {
+    project: string;
+    issueId: number;
+    role: string;
+    level: string;
+    fromLabel: string;
+    toLabel: string;
+    sessionKey: string;
+    dispatchAttempt: number;
+    acceptance: DispatchAcceptance;
+  },
+): Promise<void> {
+  const event =
+    opts.acceptance.status === "rejected" ||
+    opts.acceptance.status === "deduped"
+      ? "dispatch_rejected"
+      : "dispatch_failed";
+  await auditLog(workspaceDir, event, {
+    project: opts.project,
+    issue: opts.issueId,
+    role: opts.role,
+    level: opts.level,
+    sessionKey: opts.sessionKey,
+    dispatchAttempt: opts.dispatchAttempt,
+    fromLabel: opts.fromLabel,
+    toLabel: opts.toLabel,
+    status: opts.acceptance.status,
+    runId: opts.acceptance.runId,
+    reason: opts.acceptance.reason,
   });
 }
