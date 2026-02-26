@@ -101,24 +101,21 @@ export async function dispatchTask(
   const slot = roleWorker.levels[level]?.[slotIndex] ?? emptySlot();
   let existingSessionKey = slot.sessionKey;
 
-  // Deactivated slot: preserve session if same issue is returning (feedback cycle)
+  // Deactivated slot (issueId null) means session belongs to a previous issue — don't reuse
   if (existingSessionKey && !slot.issueId) {
-    const isSameIssueReturn = slot.lastIssueId && String(issueId) === String(slot.lastIssueId);
-    if (!isSameIssueReturn) {
-      await rc(
-        ["openclaw", "gateway", "call", "sessions.delete", "--params", JSON.stringify({ key: existingSessionKey })],
-        { timeoutMs: 10_000 },
-      ).catch(() => {});
-      existingSessionKey = null;
-    }
+    rc(
+      ["openclaw", "gateway", "call", "sessions.delete", "--params", JSON.stringify({ key: existingSessionKey })],
+      { timeoutMs: 10_000 },
+    ).catch(() => {});
+    existingSessionKey = null;
   }
 
   // Context budget check: clear session if over budget (unless same issue — feedback cycle)
   if (existingSessionKey && timeouts.sessionContextBudget < 1) {
     const shouldClear = await shouldClearSession(existingSessionKey, slot.issueId, issueId, timeouts, workspaceDir, project.name, rc);
     if (shouldClear) {
-      // Delete the gateway session (await to prevent race with later sessions.patch)
-      await rc(
+      // Delete the gateway session (fire-and-forget)
+      rc(
         ["openclaw", "gateway", "call", "sessions.delete", "--params", JSON.stringify({ key: existingSessionKey })],
         { timeoutMs: 10_000 },
       ).catch(() => {});
@@ -137,8 +134,8 @@ export async function dispatchTask(
   // Clear stale session key if it doesn't match the current deterministic key
   // (handles migration from old numeric format like ...-0 to name-based ...-Cordelia)
   if (existingSessionKey && existingSessionKey !== sessionKey) {
-    // Delete the orphaned gateway session (await to prevent race with later sessions.patch)
-    await rc(
+    // Delete the orphaned gateway session (fire-and-forget)
+    rc(
       ["openclaw", "gateway", "call", "sessions.delete", "--params", JSON.stringify({ key: existingSessionKey })],
       { timeoutMs: 10_000 },
     ).catch(() => {});
@@ -146,6 +143,7 @@ export async function dispatchTask(
   }
 
   const sessionAction = existingSessionKey ? "send" : "spawn";
+  const dispatchAttempt = (slot.dispatchAttempt ?? 0) + 1;
 
   // Fetch comments to include in task context
   const comments = await provider.listComments(issueId);
@@ -289,7 +287,8 @@ export async function dispatchTask(
   // Model is set on the session via sessions.patch (step 3), not on the agent RPC —
   // the gateway's agent endpoint rejects unknown properties like 'model'.
   sendToAgent(sessionKey, taskMessage, {
-    agentId, projectName: project.name, issueId, role, level, slotIndex, fromLabel,
+    agentId, projectName: project.name, issueId, role, level, slotIndex,
+    dispatchAttempt,
     orchestratorSessionKey: opts.sessionKey, workspaceDir,
     dispatchTimeoutMs: timeouts.dispatchMs,
     extraSystemPrompt: roleInstructions.trim() || undefined,
@@ -299,7 +298,7 @@ export async function dispatchTask(
   // Step 5: Update worker state
   try {
     await recordWorkerState(workspaceDir, project.slug, role, slotIndex, {
-      issueId, level, sessionKey, sessionAction, fromLabel, name: botName,
+      issueId, level, sessionKey, sessionAction, fromLabel, name: botName, dispatchAttempt,
     });
   } catch (err) {
     // Session is already dispatched — log warning but don't fail
@@ -324,7 +323,7 @@ export async function dispatchTask(
 
 async function recordWorkerState(
   workspaceDir: string, slug: string, role: string, slotIndex: number,
-  opts: { issueId: number; level: string; sessionKey: string; sessionAction: "spawn" | "send"; fromLabel?: string; name?: string },
+  opts: { issueId: number; level: string; sessionKey: string; sessionAction: "spawn" | "send"; fromLabel?: string; name?: string; dispatchAttempt: number },
 ): Promise<void> {
   await activateWorker(workspaceDir, slug, role, {
     issueId: String(opts.issueId),
@@ -334,6 +333,7 @@ async function recordWorkerState(
     previousLabel: opts.fromLabel,
     slotIndex,
     name: opts.name,
+    dispatchAttempt: opts.dispatchAttempt,
   });
 }
 

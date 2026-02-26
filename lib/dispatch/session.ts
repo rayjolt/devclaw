@@ -84,16 +84,17 @@ export function ensureSessionFireAndForget(sessionKey: string, model: string, wo
 
 export function sendToAgent(
   sessionKey: string, taskMessage: string,
-  opts: { agentId?: string; projectName: string; issueId: number; role: string; level?: string; slotIndex?: number; fromLabel?: string; orchestratorSessionKey?: string; workspaceDir: string; dispatchTimeoutMs?: number; extraSystemPrompt?: string; runCommand: RunCommand },
+  opts: { agentId?: string; projectName: string; issueId: number; role: string; level?: string; slotIndex?: number; dispatchAttempt?: number; orchestratorSessionKey?: string; workspaceDir: string; dispatchTimeoutMs?: number; extraSystemPrompt?: string; runCommand: RunCommand },
 ): void {
   const rc = opts.runCommand;
   const gatewayParams = JSON.stringify({
-    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${opts.fromLabel ?? "unknown"}-${sessionKey}`,
+    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${sessionKey}`,
     agentId: opts.agentId ?? "devclaw",
     sessionKey,
     message: taskMessage,
     deliver: false,
     lane: "subagent",
+    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${opts.dispatchAttempt ?? 0}-${sessionKey}`,
     ...(opts.orchestratorSessionKey ? { spawnedBy: opts.orchestratorSessionKey } : {}),
     ...(opts.extraSystemPrompt ? { extraSystemPrompt: opts.extraSystemPrompt } : {}),
   });

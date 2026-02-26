@@ -12,6 +12,8 @@ export type SlotState = {
   issueId: string | null;
   sessionKey: string | null;
   startTime: string | null;
+  /** Monotonic dispatch counter for idempotency key nonce (per slot). */
+  dispatchAttempt?: number;
   previousLabel?: string | null;
   /** Deterministic fun name for this slot (e.g. "Ada", "Grace"). */
   name?: string;

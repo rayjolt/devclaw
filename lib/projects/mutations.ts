@@ -1,18 +1,26 @@
 /**
  * projects/mutations.ts — State mutations for project worker slots.
  */
-import type { SlotState, RoleWorkerState, Project, ProjectsData } from "./types.js";
-import { acquireLock, releaseLock, readProjects, writeProjects, resolveProjectSlug } from "./io.js";
+import type {
+  SlotState,
+  RoleWorkerState,
+  Project,
+  ProjectsData,
+} from "./types.js";
+import {
+  acquireLock,
+  releaseLock,
+  readProjects,
+  writeProjects,
+  resolveProjectSlug,
+} from "./io.js";
 import { emptySlot, findFreeSlot, findSlotByIssue } from "./slots.js";
 
 /**
  * Get the RoleWorkerState for a given role.
  * Returns an empty state if the role has no workers configured.
  */
-export function getRoleWorker(
-  project: Project,
-  role: string,
-): RoleWorkerState {
+export function getRoleWorker(project: Project, role: string): RoleWorkerState {
   return project.workers[role] ?? { levels: {} };
 }
 
@@ -33,7 +41,9 @@ export async function updateSlot(
     const data = await readProjects(workspaceDir);
     const slug = resolveProjectSlug(data, slugOrChannelId);
     if (!slug) {
-      throw new Error(`Project not found for slug or channelId: ${slugOrChannelId}`);
+      throw new Error(
+        `Project not found for slug or channelId: ${slugOrChannelId}`,
+      );
     }
 
     const project = data.projects[slug]!;
@@ -76,6 +86,8 @@ export async function activateWorker(
     slotIndex?: number;
     /** Deterministic fun name for this slot. */
     name?: string;
+    /** Monotonic per-slot dispatch attempt counter for idempotency nonce. */
+    dispatchAttempt?: number;
   },
 ): Promise<ProjectsData> {
   await acquireLock(workspaceDir);
@@ -83,7 +95,9 @@ export async function activateWorker(
     const data = await readProjects(workspaceDir);
     const slug = resolveProjectSlug(data, slugOrChannelId);
     if (!slug) {
-      throw new Error(`Project not found for slug or channelId: ${slugOrChannelId}`);
+      throw new Error(
+        `Project not found for slug or channelId: ${slugOrChannelId}`,
+      );
     }
 
     const project = data.projects[slug]!;
@@ -103,6 +117,8 @@ export async function activateWorker(
       issueId: params.issueId,
       sessionKey: params.sessionKey ?? slots[idx]!.sessionKey,
       startTime: params.startTime ?? new Date().toISOString(),
+      dispatchAttempt:
+        params.dispatchAttempt ?? slots[idx]!.dispatchAttempt ?? 0,
       previousLabel: params.previousLabel ?? null,
       name: params.name ?? slots[idx]!.name,
       lastIssueId: null,
@@ -133,7 +149,9 @@ export async function deactivateWorker(
     const data = await readProjects(workspaceDir);
     const slug = resolveProjectSlug(data, slugOrChannelId);
     if (!slug) {
-      throw new Error(`Project not found for slug or channelId: ${slugOrChannelId}`);
+      throw new Error(
+        `Project not found for slug or channelId: ${slugOrChannelId}`,
+      );
     }
 
     const project = data.projects[slug]!;
@@ -162,6 +180,7 @@ export async function deactivateWorker(
           issueId: null,
           sessionKey: slot.sessionKey,
           startTime: null,
+          dispatchAttempt: slot.dispatchAttempt ?? 0,
           previousLabel: null,
           name: slot.name,
           lastIssueId: slot.issueId,

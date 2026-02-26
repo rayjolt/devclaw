@@ -9,7 +9,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { writeProjects, type ProjectsData, type Project, type RoleWorkerState } from "../projects/index.js";
+import {
+  writeProjects,
+  type ProjectsData,
+  type Project,
+  type RoleWorkerState,
+} from "../projects/index.js";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../workflow/index.js";
 import { registerBootstrapHook } from "../dispatch/bootstrap-hook.js";
 import { TestProvider } from "./test-provider.js";
@@ -38,6 +43,8 @@ export type CapturedCommand = {
   extraSystemPrompt?: string;
   /** Extracted from gateway `agent` call params, if applicable. */
   agentModel?: string;
+  /** Extracted from gateway `agent` call params, if applicable. */
+  idempotencyKey?: string;
   /** Extracted from gateway `sessions.patch` params, if applicable. */
   sessionPatch?: { key: string; model: string; label?: string };
 };
@@ -53,6 +60,8 @@ export type CommandInterceptor = {
   extraSystemPrompts(): string[];
   /** Get all agent models sent via `openclaw gateway call agent`. */
   agentModels(): string[];
+  /** Get all idempotency keys sent via `openclaw gateway call agent`. */
+  agentIdempotencyKeys(): string[];
   /** Get all session patches. */
   sessionPatches(): Array<{ key: string; model: string; label?: string }>;
   /** Reset captured commands. */
@@ -61,7 +70,16 @@ export type CommandInterceptor = {
 
 function createCommandInterceptor(): {
   interceptor: CommandInterceptor;
-  handler: (argv: string[], opts: number | { timeoutMs: number; cwd?: string }) => Promise<{ stdout: string; stderr: string; code: number | null; signal: null; killed: false }>;
+  handler: (
+    argv: string[],
+    opts: number | { timeoutMs: number; cwd?: string },
+  ) => Promise<{
+    stdout: string;
+    stderr: string;
+    code: number | null;
+    signal: null;
+    killed: false;
+  }>;
 } {
   const commands: CapturedCommand[] = [];
 
@@ -69,9 +87,10 @@ function createCommandInterceptor(): {
     argv: string[],
     optsOrTimeout: number | { timeoutMs: number; cwd?: string },
   ) => {
-    const opts = typeof optsOrTimeout === "number"
-      ? { timeoutMs: optsOrTimeout }
-      : optsOrTimeout;
+    const opts =
+      typeof optsOrTimeout === "number"
+        ? { timeoutMs: optsOrTimeout }
+        : optsOrTimeout;
 
     const captured: CapturedCommand = { argv, opts };
 
@@ -90,17 +109,32 @@ function createCommandInterceptor(): {
             if (params.model) {
               captured.agentModel = params.model;
             }
+            if (params.idempotencyKey) {
+              captured.idempotencyKey = params.idempotencyKey;
+            }
           }
           if (rpcMethod === "sessions.patch") {
-            captured.sessionPatch = { key: params.key, model: params.model, label: params.label };
+            captured.sessionPatch = {
+              key: params.key,
+              model: params.model,
+              label: params.label,
+            };
           }
-        } catch { /* ignore parse errors */ }
+        } catch {
+          /* ignore parse errors */
+        }
       }
     }
 
     commands.push(captured);
 
-    return { stdout: "{}", stderr: "", code: 0, signal: null as null, killed: false as const };
+    return {
+      stdout: "{}",
+      stderr: "",
+      code: 0,
+      signal: null as null,
+      killed: false as const,
+    };
   };
 
   const interceptor: CommandInterceptor = {
@@ -122,6 +156,11 @@ function createCommandInterceptor(): {
       return commands
         .filter((c) => c.agentModel !== undefined)
         .map((c) => c.agentModel!);
+    },
+    agentIdempotencyKeys() {
+      return commands
+        .filter((c) => c.idempotencyKey !== undefined)
+        .map((c) => c.idempotencyKey!);
     },
     sessionPatches() {
       return commands
@@ -165,7 +204,11 @@ export type TestHarness = {
    * @param content - Prompt file content
    * @param projectName - If provided, writes project-specific prompt; otherwise writes default.
    */
-  writePrompt(role: string, content: string, projectName?: string): Promise<void>;
+  writePrompt(
+    role: string,
+    content: string,
+    projectName?: string,
+  ): Promise<void>;
   /**
    * Simulate the agent:bootstrap hook firing for a session key.
    * Tests that AGENTS.md is stripped from bootstrap files for DevClaw workers.
@@ -187,12 +230,24 @@ export type HarnessOptions = {
   /** Workflow config (default: DEFAULT_WORKFLOW). */
   workflow?: WorkflowConfig;
   /** Initial worker state overrides (level + slot fields). */
-  workers?: Record<string, { level?: string; active?: boolean; issueId?: string | null; sessionKey?: string | null; startTime?: string | null; previousLabel?: string | null }>;
+  workers?: Record<
+    string,
+    {
+      level?: string;
+      active?: boolean;
+      issueId?: string | null;
+      sessionKey?: string | null;
+      startTime?: string | null;
+      previousLabel?: string | null;
+    }
+  >;
   /** Additional projects to seed. */
   extraProjects?: Record<string, Project>;
 };
 
-export async function createTestHarness(opts?: HarnessOptions): Promise<TestHarness> {
+export async function createTestHarness(
+  opts?: HarnessOptions,
+): Promise<TestHarness> {
   const {
     projectName = "test-project",
     channelId = "-1234567890",
@@ -223,13 +278,15 @@ export async function createTestHarness(opts?: HarnessOptions): Promise<TestHarn
     for (const [role, overrides] of Object.entries(workerOverrides)) {
       const level = overrides.level ?? "senior";
       const rw = defaultWorkers[role] ?? emptyRW();
-      rw.levels[level] = [{
-        active: overrides.active ?? false,
-        issueId: overrides.issueId ?? null,
-        sessionKey: overrides.sessionKey ?? null,
-        startTime: overrides.startTime ?? null,
-        previousLabel: overrides.previousLabel ?? null,
-      }];
+      rw.levels[level] = [
+        {
+          active: overrides.active ?? false,
+          issueId: overrides.issueId ?? null,
+          sessionKey: overrides.sessionKey ?? null,
+          startTime: overrides.startTime ?? null,
+          previousLabel: overrides.previousLabel ?? null,
+        },
+      ];
       defaultWorkers[role] = rw;
     }
   }
@@ -242,14 +299,16 @@ export async function createTestHarness(opts?: HarnessOptions): Promise<TestHarn
     deployUrl: "",
     baseBranch,
     deployBranch: baseBranch,
-    channels: [{ channelId, channel: "telegram", name: "primary", events: ["*"] }],
+    channels: [
+      { channelId, channel: "telegram", name: "primary", events: ["*"] },
+    ],
     provider: "github",
     workers: defaultWorkers,
   };
 
   const projectsData: ProjectsData = {
     projects: {
-      [projectName]: project,  // New schema: keyed by slug (projectName), not channelId
+      [projectName]: project, // New schema: keyed by slug (projectName), not channelId
       ...extraProjects,
     },
   };
@@ -310,7 +369,8 @@ export async function createTestHarness(opts?: HarnessOptions): Promise<TestHarn
         {
           name: "AGENTS.md",
           path: path.join(workspaceDir, "AGENTS.md"),
-          content: "# Orchestrator instructions\nThis content should be stripped.",
+          content:
+            "# Orchestrator instructions\nThis content should be stripped.",
           missing: false,
         },
       ];
@@ -325,7 +385,9 @@ export async function createTestHarness(opts?: HarnessOptions): Promise<TestHarn
       }
 
       return {
-        agentsMdStripped: bootstrapFiles[0].missing === true && bootstrapFiles[0].content === "",
+        agentsMdStripped:
+          bootstrapFiles[0].missing === true &&
+          bootstrapFiles[0].content === "",
       };
     },
     async cleanup() {
