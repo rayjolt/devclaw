@@ -205,25 +205,35 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
   const result = (o.result as Record<string, unknown> | undefined) ?? undefined;
   const final = (o.final as Record<string, unknown> | undefined) ?? undefined;
 
-  const status = normalizeStatus(o.status ?? result?.status ?? final?.status);
-  const topStatus = String(o.status ?? "").toLowerCase();
+  const topStatus = normalizeStatus(o.status);
+  const nestedStatus = normalizeStatus(result?.status ?? final?.status);
+  const topStatusRaw = String(o.status ?? "").toLowerCase();
   const runId =
     String(o.runId ?? result?.runId ?? final?.runId ?? "") || undefined;
-  const reason = String(o.reason ?? result?.reason ?? "");
+  const reason = String(o.reason ?? result?.reason ?? final?.reason ?? "");
 
-  if (status === "accepted" || status === "started") {
-    return { accepted: true, status, runId, mode: "early-status", raw: parsed };
+  // Respect explicit nested final statuses first. With --expect-final,
+  // top-level status is often transport-level (e.g. "ok") and must not mask
+  // result.status like "rejected"/"deduped".
+  if (nestedStatus === "accepted" || nestedStatus === "started") {
+    return {
+      accepted: true,
+      status: nestedStatus,
+      runId,
+      mode: "early-status",
+      raw: parsed,
+    };
   }
 
   if (
-    status === "deduped" ||
-    status === "rejected" ||
-    status === "unavailable" ||
-    status === "timeout"
+    nestedStatus === "deduped" ||
+    nestedStatus === "rejected" ||
+    nestedStatus === "unavailable" ||
+    nestedStatus === "timeout"
   ) {
     return {
       accepted: false,
-      status,
+      status: nestedStatus,
       runId,
       reason,
       mode: "explicit-failure",
@@ -231,15 +241,38 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
     };
   }
 
-  // --expect-final compatibility:
-  // gateway call can return final lifecycle envelope like:
-  // { status: "ok", runId: "...", result: { ... } }
-  // Treat as accepted only when runId exists and result payload is present.
-  if (topStatus === "ok" && runId && result && typeof result === "object") {
-    return { accepted: true, status: "accepted", runId, mode: "final-ok", raw: parsed };
+  if (topStatus === "accepted" || topStatus === "started") {
+    return { accepted: true, status: topStatus, runId, mode: "early-status", raw: parsed };
+  }
+
+  if (
+    topStatus === "deduped" ||
+    topStatus === "rejected" ||
+    topStatus === "unavailable" ||
+    topStatus === "timeout"
+  ) {
+    return {
+      accepted: false,
+      status: topStatus,
+      runId,
+      reason,
+      mode: "explicit-failure",
+      raw: parsed,
+    };
   }
 
   const acceptedFlag = o.accepted ?? result?.accepted;
+  if (acceptedFlag === false) {
+    return {
+      accepted: false,
+      status: "rejected",
+      runId,
+      reason,
+      mode: "accepted-flag",
+      raw: parsed,
+    };
+  }
+
   if (acceptedFlag === true) {
     return {
       accepted: true,
@@ -250,23 +283,20 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
     };
   }
 
+  // --expect-final compatibility:
+  // gateway call can return final lifecycle envelope like:
+  // { status: "ok", runId: "...", result: { ... } }
+  // Treat as accepted only when runId exists and result payload is present.
+  if (topStatusRaw === "ok" && runId && result && typeof result === "object") {
+    return { accepted: true, status: "accepted", runId, mode: "final-ok", raw: parsed };
+  }
+
   if (runId && (o.ok === true || result?.ok === true)) {
     return {
       accepted: true,
       status: "accepted",
       runId,
       mode: "legacy-ok",
-      raw: parsed,
-    };
-  }
-
-  if (acceptedFlag === false) {
-    return {
-      accepted: false,
-      status: "rejected",
-      runId,
-      reason,
-      mode: "accepted-flag",
       raw: parsed,
     };
   }
