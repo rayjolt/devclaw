@@ -109,6 +109,14 @@ export type DispatchAcceptance = {
     | "failed";
   runId?: string;
   reason?: string;
+  /** How acceptance was inferred (early ack vs final response compatibility path). */
+  mode?:
+    | "early-status"
+    | "final-ok"
+    | "accepted-flag"
+    | "legacy-ok"
+    | "explicit-failure"
+    | "invalid";
   raw?: unknown;
 };
 
@@ -188,26 +196,23 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
       accepted: false,
       status: "failed",
       reason: "agent RPC returned invalid JSON",
+      mode: "invalid",
       raw: stdout,
     };
   }
 
   const o = (parsed ?? {}) as Record<string, unknown>;
-  const status = normalizeStatus(
-    o.status ??
-      (o.result as Record<string, unknown> | undefined)?.status ??
-      (o.final as Record<string, unknown> | undefined)?.status,
-  );
+  const result = (o.result as Record<string, unknown> | undefined) ?? undefined;
+  const final = (o.final as Record<string, unknown> | undefined) ?? undefined;
+
+  const status = normalizeStatus(o.status ?? result?.status ?? final?.status);
+  const topStatus = String(o.status ?? "").toLowerCase();
   const runId =
-    String(
-      o.runId ??
-        (o.result as Record<string, unknown> | undefined)?.runId ??
-        (o.final as Record<string, unknown> | undefined)?.runId ??
-        "",
-    ) || undefined;
+    String(o.runId ?? result?.runId ?? final?.runId ?? "") || undefined;
+  const reason = String(o.reason ?? result?.reason ?? "");
 
   if (status === "accepted" || status === "started") {
-    return { accepted: true, status, runId, raw: parsed };
+    return { accepted: true, status, runId, mode: "early-status", raw: parsed };
   }
 
   if (
@@ -220,24 +225,39 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
       accepted: false,
       status,
       runId,
-      reason: String(
-        o.reason ??
-          (o.result as Record<string, unknown> | undefined)?.reason ??
-          "",
-      ),
+      reason,
+      mode: "explicit-failure",
       raw: parsed,
     };
   }
 
-  const acceptedFlag =
-    o.accepted ?? (o.result as Record<string, unknown> | undefined)?.accepted;
-  if (
-    acceptedFlag === true ||
-    (runId &&
-      (o.ok === true ||
-        (o.result as Record<string, unknown> | undefined)?.ok === true))
-  ) {
-    return { accepted: true, status: "accepted", runId, raw: parsed };
+  // --expect-final compatibility:
+  // gateway call can return final lifecycle envelope like:
+  // { status: "ok", runId: "...", result: { ... } }
+  // Treat as accepted only when runId exists and result payload is present.
+  if (topStatus === "ok" && runId && result && typeof result === "object") {
+    return { accepted: true, status: "accepted", runId, mode: "final-ok", raw: parsed };
+  }
+
+  const acceptedFlag = o.accepted ?? result?.accepted;
+  if (acceptedFlag === true) {
+    return {
+      accepted: true,
+      status: "accepted",
+      runId,
+      mode: "accepted-flag",
+      raw: parsed,
+    };
+  }
+
+  if (runId && (o.ok === true || result?.ok === true)) {
+    return {
+      accepted: true,
+      status: "accepted",
+      runId,
+      mode: "legacy-ok",
+      raw: parsed,
+    };
   }
 
   if (acceptedFlag === false) {
@@ -245,11 +265,8 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
       accepted: false,
       status: "rejected",
       runId,
-      reason: String(
-        o.reason ??
-          (o.result as Record<string, unknown> | undefined)?.reason ??
-          "",
-      ),
+      reason,
+      mode: "accepted-flag",
       raw: parsed,
     };
   }
@@ -259,6 +276,7 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
     status: "failed",
     runId,
     reason: "agent RPC did not include acceptance status",
+    mode: "invalid",
     raw: parsed,
   };
 }
