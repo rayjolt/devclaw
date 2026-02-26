@@ -67,46 +67,212 @@ export async function shouldClearSession(
  * Session key is deterministic, so we don't need to wait for confirmation.
  * If this fails, health check will catch orphaned state later.
  */
-export function ensureSessionFireAndForget(sessionKey: string, model: string, workspaceDir: string, runCommand: RunCommand, timeoutMs = 30_000, label?: string): void {
+export function ensureSessionFireAndForget(
+  sessionKey: string,
+  model: string,
+  workspaceDir: string,
+  runCommand: RunCommand,
+  timeoutMs = 30_000,
+  label?: string,
+): void {
   const rc = runCommand;
   const params: Record<string, unknown> = { key: sessionKey, model };
   if (label) params.label = label;
   rc(
-    ["openclaw", "gateway", "call", "sessions.patch", "--params", JSON.stringify(params)],
+    [
+      "openclaw",
+      "gateway",
+      "call",
+      "sessions.patch",
+      "--params",
+      JSON.stringify(params),
+    ],
     { timeoutMs },
   ).catch((err) => {
     auditLog(workspaceDir, "dispatch_warning", {
-      step: "ensureSession", sessionKey,
+      step: "ensureSession",
+      sessionKey,
       error: (err as Error).message ?? String(err),
     }).catch(() => {});
   });
 }
 
-export function sendToAgent(
-  sessionKey: string, taskMessage: string,
-  opts: { agentId?: string; projectName: string; issueId: number; role: string; level?: string; slotIndex?: number; dispatchAttempt?: number; orchestratorSessionKey?: string; workspaceDir: string; dispatchTimeoutMs?: number; extraSystemPrompt?: string; runCommand: RunCommand },
-): void {
+export type DispatchAcceptance = {
+  accepted: boolean;
+  status:
+    | "accepted"
+    | "started"
+    | "deduped"
+    | "rejected"
+    | "unavailable"
+    | "timeout"
+    | "failed";
+  runId?: string;
+  reason?: string;
+  raw?: unknown;
+};
+
+export async function sendToAgent(
+  sessionKey: string,
+  taskMessage: string,
+  opts: {
+    agentId?: string;
+    projectName: string;
+    issueId: number;
+    role: string;
+    level?: string;
+    slotIndex?: number;
+    dispatchAttempt?: number;
+    orchestratorSessionKey?: string;
+    workspaceDir: string;
+    dispatchTimeoutMs?: number;
+    extraSystemPrompt?: string;
+    model?: string;
+    runCommand: RunCommand;
+  },
+): Promise<DispatchAcceptance> {
   const rc = opts.runCommand;
   const gatewayParams = JSON.stringify({
-    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${sessionKey}`,
+    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${opts.dispatchAttempt ?? 0}-${sessionKey}`,
     agentId: opts.agentId ?? "devclaw",
     sessionKey,
     message: taskMessage,
     deliver: false,
     lane: "subagent",
-    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${opts.dispatchAttempt ?? 0}-${sessionKey}`,
-    ...(opts.orchestratorSessionKey ? { spawnedBy: opts.orchestratorSessionKey } : {}),
-    ...(opts.extraSystemPrompt ? { extraSystemPrompt: opts.extraSystemPrompt } : {}),
+    ...(opts.orchestratorSessionKey
+      ? { spawnedBy: opts.orchestratorSessionKey }
+      : {}),
+    ...(opts.extraSystemPrompt
+      ? { extraSystemPrompt: opts.extraSystemPrompt }
+      : {}),
+    ...(opts.model ? { model: opts.model } : {}),
   });
-  // Fire-and-forget: long-running agent turn, don't await
-  rc(
-    ["openclaw", "gateway", "call", "agent", "--params", gatewayParams, "--expect-final", "--json"],
-    { timeoutMs: opts.dispatchTimeoutMs ?? 600_000 },
-  ).catch((err) => {
-    auditLog(opts.workspaceDir, "dispatch_warning", {
-      step: "sendToAgent", sessionKey,
-      issue: opts.issueId, role: opts.role,
-      error: (err as Error).message ?? String(err),
-    }).catch(() => {});
-  });
+
+  try {
+    const result = await rc(
+      [
+        "openclaw",
+        "gateway",
+        "call",
+        "agent",
+        "--params",
+        gatewayParams,
+        "--expect-final",
+        "--json",
+      ],
+      { timeoutMs: opts.dispatchTimeoutMs ?? 600_000 },
+    );
+    return parseDispatchAcceptance(result.stdout);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    const timeout = /timeout|timed out/i.test(msg);
+    const status: DispatchAcceptance["status"] = timeout ? "timeout" : "failed";
+    await auditLog(opts.workspaceDir, "dispatch_warning", {
+      step: "sendToAgent",
+      sessionKey,
+      issue: opts.issueId,
+      role: opts.role,
+      error: msg,
+      status,
+    });
+    return { accepted: false, status, reason: msg };
+  }
+}
+
+function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
+  let parsed: unknown;
+  try {
+    parsed = stdout ? JSON.parse(stdout) : undefined;
+  } catch {
+    return {
+      accepted: false,
+      status: "failed",
+      reason: "agent RPC returned invalid JSON",
+      raw: stdout,
+    };
+  }
+
+  const o = (parsed ?? {}) as Record<string, unknown>;
+  const status = normalizeStatus(
+    o.status ??
+      (o.result as Record<string, unknown> | undefined)?.status ??
+      (o.final as Record<string, unknown> | undefined)?.status,
+  );
+  const runId =
+    String(
+      o.runId ??
+        (o.result as Record<string, unknown> | undefined)?.runId ??
+        (o.final as Record<string, unknown> | undefined)?.runId ??
+        "",
+    ) || undefined;
+
+  if (status === "accepted" || status === "started") {
+    return { accepted: true, status, runId, raw: parsed };
+  }
+
+  if (
+    status === "deduped" ||
+    status === "rejected" ||
+    status === "unavailable" ||
+    status === "timeout"
+  ) {
+    return {
+      accepted: false,
+      status,
+      runId,
+      reason: String(
+        o.reason ??
+          (o.result as Record<string, unknown> | undefined)?.reason ??
+          "",
+      ),
+      raw: parsed,
+    };
+  }
+
+  const acceptedFlag =
+    o.accepted ?? (o.result as Record<string, unknown> | undefined)?.accepted;
+  if (
+    acceptedFlag === true ||
+    (runId &&
+      (o.ok === true ||
+        (o.result as Record<string, unknown> | undefined)?.ok === true))
+  ) {
+    return { accepted: true, status: "accepted", runId, raw: parsed };
+  }
+
+  if (acceptedFlag === false) {
+    return {
+      accepted: false,
+      status: "rejected",
+      runId,
+      reason: String(
+        o.reason ??
+          (o.result as Record<string, unknown> | undefined)?.reason ??
+          "",
+      ),
+      raw: parsed,
+    };
+  }
+
+  return {
+    accepted: false,
+    status: "failed",
+    runId,
+    reason: "agent RPC did not include acceptance status",
+    raw: parsed,
+  };
+}
+
+function normalizeStatus(
+  value: unknown,
+): DispatchAcceptance["status"] | undefined {
+  const s = String(value ?? "").toLowerCase();
+  if (!s) return undefined;
+  if (s === "accepted" || s === "started") return s;
+  if (s === "deduped" || s === "duplicate" || s === "idempotent_replay")
+    return "deduped";
+  if (s === "rejected" || s === "denied") return "rejected";
+  if (s === "unavailable" || s === "offline") return "unavailable";
+  if (s === "timeout" || s === "timed_out") return "timeout";
+  return "failed";
 }
