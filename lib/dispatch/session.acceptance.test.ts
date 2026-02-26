@@ -48,6 +48,44 @@ describe("sendToAgent acceptance parsing", () => {
     assert.strictEqual(out.mode, "final-ok");
   });
 
+  it("does not treat final envelope as accepted when nested status is rejected", async () => {
+    const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
+      projectName: "proj",
+      issueId: 25,
+      role: "developer",
+      level: "medior",
+      workspaceDir: "/tmp",
+      runCommand: mkRunCommand(
+        '{"status":"ok","runId":"run-final","result":{"status":"rejected","reason":"duplicate"}}',
+      ),
+    });
+
+    assert.strictEqual(out.accepted, false);
+    assert.strictEqual(out.status, "rejected");
+    assert.strictEqual(out.runId, "run-final");
+    assert.strictEqual(out.reason, "duplicate");
+    assert.strictEqual(out.mode, "explicit-failure");
+  });
+
+  it("does not treat final envelope as accepted when nested accepted=false", async () => {
+    const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
+      projectName: "proj",
+      issueId: 25,
+      role: "developer",
+      level: "medior",
+      workspaceDir: "/tmp",
+      runCommand: mkRunCommand(
+        '{"status":"ok","runId":"run-final","result":{"accepted":false,"reason":"deduped"}}',
+      ),
+    });
+
+    assert.strictEqual(out.accepted, false);
+    assert.strictEqual(out.status, "rejected");
+    assert.strictEqual(out.runId, "run-final");
+    assert.strictEqual(out.reason, "deduped");
+    assert.strictEqual(out.mode, "accepted-flag");
+  });
+
   it("fails closed for malformed final-mode responses", async () => {
     const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
       projectName: "proj",
