@@ -93,6 +93,7 @@ function createCommandInterceptor(): {
         : optsOrTimeout;
 
     const captured: CapturedCommand = { argv, opts };
+    let mockStdout = "{}";
 
     // Parse gateway agent calls to extract task message
     if (argv[0] === "openclaw" && argv[1] === "gateway" && argv[2] === "call") {
@@ -112,6 +113,10 @@ function createCommandInterceptor(): {
             if (params.idempotencyKey) {
               captured.idempotencyKey = params.idempotencyKey;
             }
+            mockStdout = JSON.stringify({
+              status: "accepted",
+              runId: `run-${Date.now()}`,
+            });
           }
           if (rpcMethod === "sessions.patch") {
             captured.sessionPatch = {
@@ -129,7 +134,7 @@ function createCommandInterceptor(): {
     commands.push(captured);
 
     return {
-      stdout: "{}",
+      stdout: mockStdout,
       stderr: "",
       code: 0,
       signal: null as null,
