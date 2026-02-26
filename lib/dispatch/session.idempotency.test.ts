@@ -19,7 +19,7 @@ describe("sendToAgent idempotency key", () => {
         captured.push(params.idempotencyKey);
       }
       return {
-        stdout: "{}",
+        stdout: '{"status":"accepted","runId":"run-test"}',
         stderr: "",
         code: 0,
         signal: null,
@@ -28,7 +28,7 @@ describe("sendToAgent idempotency key", () => {
       };
     };
 
-    sendToAgent("agent:test:subagent:proj-dev-senior-ada", "msg", {
+    await sendToAgent("agent:test:subagent:proj-dev-senior-ada", "msg", {
       projectName: "proj",
       issueId: 17,
       role: "developer",
@@ -39,7 +39,7 @@ describe("sendToAgent idempotency key", () => {
       runCommand,
     });
 
-    sendToAgent("agent:test:subagent:proj-dev-senior-ada", "msg", {
+    await sendToAgent("agent:test:subagent:proj-dev-senior-ada", "msg", {
       projectName: "proj",
       issueId: 17,
       role: "developer",
