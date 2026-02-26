@@ -14,11 +14,14 @@ export function emptySlot(): SlotState {
     issueId: null,
     sessionKey: null,
     startTime: null,
+    dispatchAttempt: 0,
   };
 }
 
 /** Create a blank RoleWorkerState with the given per-level capacities. */
-export function emptyRoleWorkerState(levelMaxWorkers: Record<string, number>): RoleWorkerState {
+export function emptyRoleWorkerState(
+  levelMaxWorkers: Record<string, number>,
+): RoleWorkerState {
   const levels: Record<string, SlotState[]> = {};
   for (const [level, max] of Object.entries(levelMaxWorkers)) {
     levels[level] = [];
@@ -30,7 +33,10 @@ export function emptyRoleWorkerState(levelMaxWorkers: Record<string, number>): R
 }
 
 /** Return the lowest-index inactive slot within a specific level, or null if full. */
-export function findFreeSlot(roleWorker: RoleWorkerState, level: string): number | null {
+export function findFreeSlot(
+  roleWorker: RoleWorkerState,
+  level: string,
+): number | null {
   const slots = roleWorker.levels[level];
   if (!slots) return null;
   for (let i = 0; i < slots.length; i++) {
@@ -45,7 +51,10 @@ export function findFreeSlot(roleWorker: RoleWorkerState, level: string): number
  * Active workers are never removed — they finish naturally.
  * Mutates roleWorker in place. Returns true if any changes were made.
  */
-export function reconcileSlots(roleWorker: RoleWorkerState, levelMaxWorkers: Record<string, number>): boolean {
+export function reconcileSlots(
+  roleWorker: RoleWorkerState,
+  levelMaxWorkers: Record<string, number>,
+): boolean {
   let changed = false;
   for (const [level, max] of Object.entries(levelMaxWorkers)) {
     if (!roleWorker.levels[level]) {
@@ -67,7 +76,10 @@ export function reconcileSlots(roleWorker: RoleWorkerState, levelMaxWorkers: Rec
 }
 
 /** Find the level and slot index for a given issueId, or null if not found. */
-export function findSlotByIssue(roleWorker: RoleWorkerState, issueId: string): { level: string; slotIndex: number } | null {
+export function findSlotByIssue(
+  roleWorker: RoleWorkerState,
+  issueId: string,
+): { level: string; slotIndex: number } | null {
   for (const [level, slots] of Object.entries(roleWorker.levels)) {
     for (let i = 0; i < slots.length; i++) {
       if (slots[i]!.issueId === issueId) return { level, slotIndex: i };

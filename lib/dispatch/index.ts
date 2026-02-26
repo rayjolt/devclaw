@@ -143,6 +143,7 @@ export async function dispatchTask(
   }
 
   const sessionAction = existingSessionKey ? "send" : "spawn";
+  const dispatchAttempt = (slot.dispatchAttempt ?? 0) + 1;
 
   // Fetch comments to include in task context
   const comments = await provider.listComments(issueId);
@@ -287,6 +288,7 @@ export async function dispatchTask(
   // the gateway's agent endpoint rejects unknown properties like 'model'.
   sendToAgent(sessionKey, taskMessage, {
     agentId, projectName: project.name, issueId, role, level, slotIndex,
+    dispatchAttempt,
     orchestratorSessionKey: opts.sessionKey, workspaceDir,
     dispatchTimeoutMs: timeouts.dispatchMs,
     extraSystemPrompt: roleInstructions.trim() || undefined,
@@ -296,7 +298,7 @@ export async function dispatchTask(
   // Step 5: Update worker state
   try {
     await recordWorkerState(workspaceDir, project.slug, role, slotIndex, {
-      issueId, level, sessionKey, sessionAction, fromLabel, name: botName,
+      issueId, level, sessionKey, sessionAction, fromLabel, name: botName, dispatchAttempt,
     });
   } catch (err) {
     // Session is already dispatched — log warning but don't fail
@@ -321,7 +323,7 @@ export async function dispatchTask(
 
 async function recordWorkerState(
   workspaceDir: string, slug: string, role: string, slotIndex: number,
-  opts: { issueId: number; level: string; sessionKey: string; sessionAction: "spawn" | "send"; fromLabel?: string; name?: string },
+  opts: { issueId: number; level: string; sessionKey: string; sessionAction: "spawn" | "send"; fromLabel?: string; name?: string; dispatchAttempt: number },
 ): Promise<void> {
   await activateWorker(workspaceDir, slug, role, {
     issueId: String(opts.issueId),
@@ -331,6 +333,7 @@ async function recordWorkerState(
     previousLabel: opts.fromLabel,
     slotIndex,
     name: opts.name,
+    dispatchAttempt: opts.dispatchAttempt,
   });
 }
 
