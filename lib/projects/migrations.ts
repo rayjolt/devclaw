@@ -89,7 +89,10 @@ function isLevelFormat(worker: Record<string, unknown>): boolean {
  * Extracts sessionKey from sessions[level].
  * Slots with null level are skipped (no "unknown" fallback).
  */
-function parseLegacyFlatState(worker: Record<string, unknown>, role: string): RoleWorkerState {
+function parseLegacyFlatState(
+  worker: Record<string, unknown>,
+  role: string,
+): RoleWorkerState {
   const level = (worker.level ?? worker.tier ?? null) as string | null;
   const migratedLevel = migrateLevel(level, role);
   const sessions = (worker.sessions as Record<string, string | null>) ?? {};
@@ -103,7 +106,7 @@ function parseLegacyFlatState(worker: Record<string, unknown>, role: string): Ro
   if (migratedSessions[migratedLevel]) {
     sessionKey = migratedSessions[migratedLevel]!;
   } else {
-    const firstNonNull = Object.values(migratedSessions).find(v => v != null);
+    const firstNonNull = Object.values(migratedSessions).find((v) => v != null);
     if (firstNonNull) sessionKey = firstNonNull;
   }
 
@@ -112,6 +115,7 @@ function parseLegacyFlatState(worker: Record<string, unknown>, role: string): Ro
     issueId: worker.issueId as string | null,
     sessionKey,
     startTime: worker.startTime as string | null,
+    dispatchAttempt: (worker.dispatchAttempt as number | undefined) ?? 0,
     previousLabel: (worker.previousLabel as string | null) ?? null,
     name: (worker.name ?? worker.slotName) as string | undefined,
   };
@@ -123,7 +127,10 @@ function parseLegacyFlatState(worker: Record<string, unknown>, role: string): Ro
  * Parse old slot-based format into per-level RoleWorkerState.
  * Groups slots by their `level` field. Slots with null level are skipped.
  */
-function parseOldSlotState(worker: Record<string, unknown>, role: string): RoleWorkerState {
+function parseOldSlotState(
+  worker: Record<string, unknown>,
+  role: string,
+): RoleWorkerState {
   const rawSlots = (worker.slots as Array<Record<string, unknown>>) ?? [];
   const levels: Record<string, SlotState[]> = {};
 
@@ -137,6 +144,7 @@ function parseOldSlotState(worker: Record<string, unknown>, role: string): RoleW
       issueId: s.issueId as string | null,
       sessionKey: s.sessionKey as string | null,
       startTime: s.startTime as string | null,
+      dispatchAttempt: (s.dispatchAttempt as number | undefined) ?? 0,
       previousLabel: (s.previousLabel as string | null) ?? null,
       name: (s.name ?? s.slotName) as string | undefined,
     });
@@ -149,8 +157,14 @@ function parseOldSlotState(worker: Record<string, unknown>, role: string): RoleW
  * Parse already per-level format, applying level alias migration.
  * Strips "unknown" level entries from previous migration artifacts.
  */
-function parseLevelState(worker: Record<string, unknown>, role: string): RoleWorkerState {
-  const rawLevels = worker.levels as Record<string, Array<Record<string, unknown>>>;
+function parseLevelState(
+  worker: Record<string, unknown>,
+  role: string,
+): RoleWorkerState {
+  const rawLevels = worker.levels as Record<
+    string,
+    Array<Record<string, unknown>>
+  >;
   const levels: Record<string, SlotState[]> = {};
 
   for (const [rawLevel, rawSlots] of Object.entries(rawLevels)) {
@@ -166,6 +180,7 @@ function parseLevelState(worker: Record<string, unknown>, role: string): RoleWor
         issueId: s.issueId as string | null,
         sessionKey: s.sessionKey as string | null,
         startTime: s.startTime as string | null,
+        dispatchAttempt: (s.dispatchAttempt as number | undefined) ?? 0,
         previousLabel: (s.previousLabel as string | null) ?? null,
         name: (s.name ?? s.slotName) as string | undefined,
       });
@@ -175,7 +190,10 @@ function parseLevelState(worker: Record<string, unknown>, role: string): RoleWor
   return { levels };
 }
 
-function parseWorkerState(worker: Record<string, unknown>, role: string): RoleWorkerState {
+function parseWorkerState(
+  worker: Record<string, unknown>,
+  role: string,
+): RoleWorkerState {
   if (isLevelFormat(worker)) {
     return parseLevelState(worker, role);
   }
@@ -250,7 +268,14 @@ export function migrateProject(project: Project): boolean {
     // Preserve the legacy single-channel registration. channelId is unknown here
     // (the outer loop in readProjects doesn't pass it), so we leave channelId blank
     // and callers fall back to channels[0] which still gives the right channel type.
-    project.channels = [{ channelId: "", channel: rawChannel as "telegram" | "whatsapp" | "discord" | "slack", name: "primary", events: ["*"] }];
+    project.channels = [
+      {
+        channelId: "",
+        channel: rawChannel as "telegram" | "whatsapp" | "discord" | "slack",
+        name: "primary",
+        events: ["*"],
+      },
+    ];
     changed = true;
   }
   if ((raw as Record<string, unknown>).channel !== undefined) {

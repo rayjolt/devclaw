@@ -67,45 +67,90 @@ export async function shouldClearSession(
  * Session key is deterministic, so we don't need to wait for confirmation.
  * If this fails, health check will catch orphaned state later.
  */
-export function ensureSessionFireAndForget(sessionKey: string, model: string, workspaceDir: string, runCommand: RunCommand, timeoutMs = 30_000, label?: string): void {
+export function ensureSessionFireAndForget(
+  sessionKey: string,
+  model: string,
+  workspaceDir: string,
+  runCommand: RunCommand,
+  timeoutMs = 30_000,
+  label?: string,
+): void {
   const rc = runCommand;
   const params: Record<string, unknown> = { key: sessionKey, model };
   if (label) params.label = label;
   rc(
-    ["openclaw", "gateway", "call", "sessions.patch", "--params", JSON.stringify(params)],
+    [
+      "openclaw",
+      "gateway",
+      "call",
+      "sessions.patch",
+      "--params",
+      JSON.stringify(params),
+    ],
     { timeoutMs },
   ).catch((err) => {
     auditLog(workspaceDir, "dispatch_warning", {
-      step: "ensureSession", sessionKey,
+      step: "ensureSession",
+      sessionKey,
       error: (err as Error).message ?? String(err),
     }).catch(() => {});
   });
 }
 
 export function sendToAgent(
-  sessionKey: string, taskMessage: string,
-  opts: { agentId?: string; projectName: string; issueId: number; role: string; level?: string; slotIndex?: number; orchestratorSessionKey?: string; workspaceDir: string; dispatchTimeoutMs?: number; extraSystemPrompt?: string; model?: string; runCommand: RunCommand },
+  sessionKey: string,
+  taskMessage: string,
+  opts: {
+    agentId?: string;
+    projectName: string;
+    issueId: number;
+    role: string;
+    level?: string;
+    slotIndex?: number;
+    dispatchAttempt?: number;
+    orchestratorSessionKey?: string;
+    workspaceDir: string;
+    dispatchTimeoutMs?: number;
+    extraSystemPrompt?: string;
+    model?: string;
+    runCommand: RunCommand;
+  },
 ): void {
   const rc = opts.runCommand;
   const gatewayParams = JSON.stringify({
-    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${sessionKey}`,
+    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${opts.dispatchAttempt ?? 0}-${sessionKey}`,
     agentId: opts.agentId ?? "devclaw",
     sessionKey,
     message: taskMessage,
     deliver: false,
     lane: "subagent",
-    ...(opts.orchestratorSessionKey ? { spawnedBy: opts.orchestratorSessionKey } : {}),
-    ...(opts.extraSystemPrompt ? { extraSystemPrompt: opts.extraSystemPrompt } : {}),
+    ...(opts.orchestratorSessionKey
+      ? { spawnedBy: opts.orchestratorSessionKey }
+      : {}),
+    ...(opts.extraSystemPrompt
+      ? { extraSystemPrompt: opts.extraSystemPrompt }
+      : {}),
     ...(opts.model ? { model: opts.model } : {}),
   });
   // Fire-and-forget: long-running agent turn, don't await
   rc(
-    ["openclaw", "gateway", "call", "agent", "--params", gatewayParams, "--expect-final", "--json"],
+    [
+      "openclaw",
+      "gateway",
+      "call",
+      "agent",
+      "--params",
+      gatewayParams,
+      "--expect-final",
+      "--json",
+    ],
     { timeoutMs: opts.dispatchTimeoutMs ?? 600_000 },
   ).catch((err) => {
     auditLog(opts.workspaceDir, "dispatch_warning", {
-      step: "sendToAgent", sessionKey,
-      issue: opts.issueId, role: opts.role,
+      step: "sendToAgent",
+      sessionKey,
+      issue: opts.issueId,
+      role: opts.role,
       error: (err as Error).message ?? String(err),
     }).catch(() => {});
   });
