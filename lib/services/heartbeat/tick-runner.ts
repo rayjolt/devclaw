@@ -4,13 +4,15 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk";
 import type { RunCommand } from "../../context.js";
 import path from "node:path";
-import { readProjects, getProject, type Project } from "../../projects/index.js";
+import {
+  readProjects,
+  getProject,
+  type Project,
+} from "../../projects/index.js";
 import { log as auditLog } from "../../audit.js";
 import { DATA_DIR } from "../../setup/migrate-layout.js";
 import { loadInstanceName } from "../../instance.js";
-import {
-  type SessionLookup,
-} from "./health.js";
+import { type SessionLookup } from "./health.js";
 import { projectTick } from "../tick.js";
 import { createProvider } from "../../providers/index.js";
 import { loadConfig } from "../../config/index.js";
@@ -50,11 +52,22 @@ export async function tick(opts: {
   runtime?: PluginRuntime;
   runCommand: RunCommand;
 }): Promise<TickResult> {
-  const { workspaceDir, agentId, config, pluginConfig, sessions, runtime, runCommand } = opts;
+  const {
+    workspaceDir,
+    agentId,
+    config,
+    pluginConfig,
+    sessions,
+    runtime,
+    runCommand,
+  } = opts;
 
   // Load instance name for ownership filtering and auto-claiming
   const resolvedWorkspaceConfig = await loadConfig(workspaceDir);
-  const instanceName = await loadInstanceName(workspaceDir, resolvedWorkspaceConfig.instanceName);
+  const instanceName = await loadInstanceName(
+    workspaceDir,
+    resolvedWorkspaceConfig.instanceName,
+  );
 
   const data = await readProjects(workspaceDir);
   const slugs = Object.keys(data.projects);
@@ -111,17 +124,34 @@ export async function tick(opts: {
 
       // Review pass: transition issues whose PR check condition is met
       result.totalReviewTransitions += await performReviewPass(
-        workspaceDir, slug, project, provider, resolvedConfig, pluginConfig, runtime, runCommand,
+        workspaceDir,
+        slug,
+        project,
+        provider,
+        resolvedConfig,
+        pluginConfig,
+        runtime,
+        runCommand,
       );
 
       // Review skip pass: auto-merge and transition review:skip issues through the review queue
       result.totalReviewSkipTransitions += await performReviewSkipPass(
-        workspaceDir, slug, project, provider, resolvedConfig, pluginConfig, runtime, runCommand,
+        workspaceDir,
+        slug,
+        project,
+        provider,
+        resolvedConfig,
+        pluginConfig,
+        runtime,
+        runCommand,
       );
 
       // Test skip pass: auto-transition test:skip issues through the test queue
       result.totalTestSkipTransitions += await performTestSkipPass(
-        workspaceDir, slug, provider, resolvedConfig,
+        workspaceDir,
+        slug,
+        provider,
+        resolvedConfig,
       );
 
       // Budget check: stop if we've hit the limit
@@ -146,6 +176,7 @@ export async function tick(opts: {
         agentId,
         pluginConfig,
         maxPickups: remaining,
+        runtime,
         instanceName,
         runtime,
         runCommand,
@@ -189,6 +220,6 @@ export async function checkProjectActive(
   const project = getProject(data, slug);
   if (!project) return false;
   return Object.values(project.workers).some((w) =>
-    Object.values(w.levels).some(slots => slots.some(s => s.active)),
+    Object.values(w.levels).some((slots) => slots.some((s) => s.active)),
   );
 }
