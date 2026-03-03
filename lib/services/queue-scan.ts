@@ -103,7 +103,8 @@ export type DependencyGateStatus = {
 // ---------------------------------------------------------------------------
 
 export async function findNextIssueForRole(
-  provider: Pick<IssueProvider, "listIssuesByLabel" | "getIssueDependencies">,
+  provider: Pick<IssueProvider, "listIssuesByLabel" | "getIssueDependencies"> &
+    Partial<Pick<IssueProvider, "transitionLabel" | "addComment">>,
   role: Role,
   workflow: WorkflowConfig,
   instanceName?: string,
