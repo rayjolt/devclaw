@@ -6,6 +6,7 @@ import {
   type Issue,
   type StateLabel,
   type IssueComment,
+  type IssueDependencies,
   type PrStatus,
   type PrReviewComment,
   PrState,
@@ -119,6 +120,12 @@ export class GitLabProvider implements IssueProvider {
   async getIssue(issueId: number): Promise<Issue> {
     const raw = await this.glab(["issue", "view", String(issueId), "--output", "json"]);
     return JSON.parse(raw) as Issue;
+  }
+
+  async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+    // GitLab adapter support will be added when we wire native issue-link/dependency relations.
+    // Return a normalized empty graph to preserve backward compatibility.
+    return { issueId, blockers: [], dependents: [] };
   }
 
   async listComments(issueId: number): Promise<IssueComment[]> {
