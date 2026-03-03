@@ -331,7 +331,9 @@ export async function executeCompletion(opts: {
     updatedIssue = transitionResult.issue;
   }
 
-  const runPostActions = transitioned && effectiveTo === rule.to;
+  // Post-actions are allowed only when we actually transition to the rule's
+  // intended state (rule.to) AND the terminal guard did not block.
+  const runPostActions = !terminalBlocked && transitioned && effectiveTo === rule.to;
   if (runPostActions) {
     for (const action of rule.actions) {
       switch (action) {
