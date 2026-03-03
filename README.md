@@ -601,3 +601,4 @@ See the [Changelog](CHANGELOG.md) for a detailed history of changes, or browse [
 ## License
 
 MIT
+\n# Dummy change for dependency gating test (issue #41)
