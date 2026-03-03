@@ -10,12 +10,12 @@ import { GitHubProvider } from "./github.js";
 import { GitLabProvider } from "./gitlab.js";
 
 function createGitHubRunCommand(opts: {
-  trackedInIssues?: Array<{ number: number; title: string; state: string; url: string }>;
-  trackedIssues?: Array<{ number: number; title: string; state: string; url: string }>;
+  blockedBy?: Array<{ number: number; title: string; state: string; url: string }>;
+  blocking?: Array<{ number: number; title: string; state: string; url: string }>;
   failGraphql?: boolean;
 }): RunCommand {
-  const trackedInIssues = opts.trackedInIssues ?? [];
-  const trackedIssues = opts.trackedIssues ?? [];
+  const blockedBy = opts.blockedBy ?? [];
+  const blocking = opts.blocking ?? [];
 
   return (async (command: string[]) => {
     const rendered = command.join(" ");
@@ -34,13 +34,16 @@ function createGitHubRunCommand(opts: {
 
     if (rendered.includes("gh api graphql")) {
       if (opts.failGraphql) throw new Error("GraphQL is down");
+      assert.match(rendered, /\bblockedBy\(first: 100\)/);
+      assert.match(rendered, /\bblocking\(first: 100\)/);
+      assert.doesNotMatch(rendered, /trackedInIssues|trackedIssues/);
       return {
         stdout: JSON.stringify({
           data: {
             repository: {
               issue: {
-                trackedInIssues: { nodes: trackedInIssues },
-                trackedIssues: { nodes: trackedIssues },
+                blockedBy: { nodes: blockedBy },
+                blocking: { nodes: blocking },
               },
             },
           },
@@ -76,7 +79,7 @@ describe("GitHubProvider.getIssueDependencies", () => {
     const provider = new GitHubProvider({
       repoPath: "/fake",
       runCommand: createGitHubRunCommand({
-        trackedInIssues: [
+        blockedBy: [
           { number: 1, title: "Parent", state: "OPEN", url: "https://github.com/o/r/issues/1" },
         ],
       }),
@@ -94,11 +97,11 @@ describe("GitHubProvider.getIssueDependencies", () => {
     const provider = new GitHubProvider({
       repoPath: "/fake",
       runCommand: createGitHubRunCommand({
-        trackedInIssues: [
+        blockedBy: [
           { number: 1, title: "Blocker A", state: "OPEN", url: "https://github.com/o/r/issues/1" },
           { number: 3, title: "Blocker B", state: "OPEN", url: "https://github.com/o/r/issues/3" },
         ],
-        trackedIssues: [
+        blocking: [
           { number: 7, title: "Dependent", state: "OPEN", url: "https://github.com/o/r/issues/7" },
         ],
       }),
