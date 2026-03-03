@@ -4,7 +4,7 @@
  * Shared by: tick (projectTick), work-start (auto-pickup), and other consumers
  * that need to find queued issues or detect roles/levels from labels.
  */
-import type { Issue, IssueDependency, StateLabel } from "../providers/provider.js";
+import type { Issue, IssueDependency, IssueDependencies, StateLabel } from "../providers/provider.js";
 import type { IssueProvider } from "../providers/provider.js";
 import { getLevelsForRole, getAllLevels } from "../roles/index.js";
 import {
@@ -91,6 +91,13 @@ export function detectRoleFromLabel(
   return workflowDetectRole(workflow, label);
 }
 
+export type DependencyGateStatus = {
+  blocked: boolean;
+  reason?: string;
+  cyclePath?: number[];
+  kind?: "dependency" | "cycle" | "uncertain";
+};
+
 // ---------------------------------------------------------------------------
 // Issue queue queries
 // ---------------------------------------------------------------------------
@@ -100,6 +107,14 @@ export async function findNextIssueForRole(
   role: Role,
   workflow: WorkflowConfig,
   instanceName?: string,
+  opts?: {
+    onCycleDetected?: (args: {
+      issue: Issue;
+      label: StateLabel;
+      cyclePath: number[];
+      reason: string;
+    }) => Promise<void>;
+  },
 ): Promise<{ issue: Issue; label: StateLabel } | null> {
   const labels = getQueueLabels(workflow, role);
   for (const label of labels) {
@@ -110,22 +125,58 @@ export async function findNextIssueForRole(
         : issues;
 
       for (const issue of eligible.slice().reverse()) {
-        const blocked = await isIssueBlocked(provider, issue, workflow);
-        if (!blocked) return { issue, label };
+        const gate = await getDependencyGateStatus(provider, issue, workflow);
+        if (!gate.blocked) return { issue, label };
+
+        if (gate.kind === "cycle" && gate.cyclePath && opts?.onCycleDetected) {
+          await opts.onCycleDetected({
+            issue,
+            label,
+            cyclePath: gate.cyclePath,
+            reason: gate.reason ?? `Dependency cycle detected: ${gate.cyclePath.join(" → ")}`,
+          });
+        }
       }
     } catch { /* continue */ }
   }
   return null;
 }
 
-async function isIssueBlocked(
+export async function getDependencyGateStatus(
   provider: Pick<IssueProvider, "getIssueDependencies">,
-  issue: Issue,
+  issue: Pick<Issue, "iid">,
   workflow: WorkflowConfig,
-): Promise<boolean> {
+): Promise<DependencyGateStatus> {
+  const depCache = new Map<number, IssueDependencies | null>();
   const deps = await getIssueDependenciesWithRetry(provider, issue.iid, 3);
-  if (!deps) return true; // fail-closed when dependency status is uncertain
-  return deps.blockers.some((blocker) => !isResolvedBlocker(blocker, workflow));
+  if (!deps) {
+    return {
+      blocked: true,
+      kind: "uncertain",
+      reason: "Dependency status unavailable (provider read failed)",
+    };
+  }
+  depCache.set(issue.iid, deps);
+
+  const unresolved = deps.blockers.filter((blocker) => !isResolvedBlocker(blocker, workflow));
+  if (unresolved.length === 0) return { blocked: false };
+
+  const cyclePath = await detectCyclePath(provider, issue.iid, workflow, depCache);
+  if (cyclePath) {
+    return {
+      blocked: true,
+      kind: "cycle",
+      cyclePath,
+      reason: `Dependency cycle detected: ${cyclePath.join(" → ")}`,
+    };
+  }
+
+  const blockerIds = unresolved.map((b) => `#${b.iid}`).join(", ");
+  return {
+    blocked: true,
+    kind: "dependency",
+    reason: `Waiting on blockers: ${blockerIds}`,
+  };
 }
 
 function isResolvedBlocker(blocker: IssueDependency, workflow: WorkflowConfig): boolean {
@@ -144,6 +195,35 @@ function isResolvedBlocker(blocker: IssueDependency, workflow: WorkflowConfig): 
   // Fallback when labels are unavailable: use provider issue state.
   const state = blocker.state.toLowerCase();
   return state === "closed" || state === "done" || state === "merged";
+}
+
+async function detectCyclePath(
+  provider: Pick<IssueProvider, "getIssueDependencies">,
+  startIssueId: number,
+  workflow: WorkflowConfig,
+  cache: Map<number, IssueDependencies | null>,
+): Promise<number[] | null> {
+  const visited = new Set<number>([startIssueId]);
+
+  const dfs = async (nodeId: number, path: number[]): Promise<number[] | null> => {
+    let deps = cache.get(nodeId);
+    if (deps === undefined) {
+      deps = await getIssueDependenciesWithRetry(provider, nodeId, 3);
+      cache.set(nodeId, deps ?? null);
+    }
+    if (!deps) return null;
+
+    for (const blocker of deps.blockers.filter((b) => !isResolvedBlocker(b, workflow))) {
+      if (blocker.iid === startIssueId) return [...path, startIssueId];
+      if (visited.has(blocker.iid)) continue;
+      visited.add(blocker.iid);
+      const found = await dfs(blocker.iid, [...path, blocker.iid]);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  return dfs(startIssueId, [startIssueId]);
 }
 
 async function getIssueDependenciesWithRetry(

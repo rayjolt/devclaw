@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { findNextIssueForRole } from "./queue-scan.js";
+import { findNextIssueForRole, getDependencyGateStatus } from "./queue-scan.js";
 import { DEFAULT_WORKFLOW } from "../workflow/index.js";
 import type { Issue, IssueDependencies, IssueProvider } from "../providers/provider.js";
 
@@ -118,5 +118,59 @@ describe("findNextIssueForRole dependency gating", () => {
     assert.ok(next);
     assert.strictEqual(next!.issue.iid, 12);
     assert.strictEqual(attempts, 3);
+  });
+
+  it("detects direct dependency cycle A↔B", async () => {
+    const provider: QueueProvider = {
+      async listIssuesByLabel() {
+        return [issue(1)];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        if (issueId === 1) {
+          return {
+            issueId,
+            blockers: [{ iid: 2, title: "B", state: "OPEN", web_url: "u", relation: "blocked_by" }],
+            dependents: [],
+          };
+        }
+        return {
+          issueId,
+          blockers: [{ iid: 1, title: "A", state: "OPEN", web_url: "u", relation: "blocked_by" }],
+          dependents: [],
+        };
+      },
+    };
+
+    const gate = await getDependencyGateStatus(provider, { iid: 1 }, DEFAULT_WORKFLOW);
+    assert.strictEqual(gate.blocked, true);
+    assert.strictEqual(gate.kind, "cycle");
+    assert.deepStrictEqual(gate.cyclePath, [1, 2, 1]);
+  });
+
+  it("detects indirect dependency cycle A→B→C→A and invokes cycle callback", async () => {
+    const provider: QueueProvider = {
+      async listIssuesByLabel() {
+        return [issue(1)];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        if (issueId === 1) {
+          return { issueId, blockers: [{ iid: 2, title: "B", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
+        }
+        if (issueId === 2) {
+          return { issueId, blockers: [{ iid: 3, title: "C", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
+        }
+        return { issueId, blockers: [{ iid: 1, title: "A", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
+      },
+    };
+
+    let callbackPath: number[] | null = null;
+    const next = await findNextIssueForRole(provider, "developer", DEFAULT_WORKFLOW, undefined, {
+      onCycleDetected: async ({ cyclePath }) => {
+        callbackPath = cyclePath;
+      },
+    });
+
+    assert.strictEqual(next, null);
+    assert.deepStrictEqual(callbackPath, [1, 2, 3, 1]);
   });
 });
