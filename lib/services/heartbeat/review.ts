@@ -18,6 +18,7 @@ import { detectStepRouting } from "../queue-scan.js";
 import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
+import { guardTerminalCompletion } from "../terminal-guard.js";
 
 /**
  * Scan review-type states and transition issues whose PR check condition is met.
@@ -228,6 +229,59 @@ export async function reviewPass(opts: {
       const actions = typeof transition === "object" ? transition.actions : undefined;
       const targetState = workflow.states[targetKey];
       if (!targetState) continue;
+
+      // Pre-terminal guard: do not allow Done/closeIssue when PR is conflicting,
+      // or when auto-merge is off and PR is not actually merged yet.
+      const guard = await guardTerminalCompletion({
+        workflow,
+        provider,
+        issueId: issue.iid,
+        fromLabel: state.label,
+        toState: targetState,
+        actions,
+      });
+
+      if (!guard.allow) {
+        const pr = guard.prStatus;
+        const prUrl = pr?.url ?? status.url ?? null;
+        try {
+          if (guard.reason === "merge_conflict") {
+            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${prUrl ?? "no PR url"}).`);
+          } else if (guard.reason === "pr_not_merged_auto_merge_off") {
+            await provider.addComment(issue.iid, `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${prUrl ?? "no PR url"}). Merge the PR, then the heartbeat will close this issue.`);
+          } else if (guard.reason === "pr_closed_unmerged") {
+            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${prUrl ?? "no PR url"}).`);
+          } else {
+            await provider.addComment(issue.iid, "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.");
+          }
+        } catch { /* best-effort */ }
+
+        await auditLog(workspaceDir, "terminal_completion_blocked", {
+          project: projectName,
+          issueId: issue.iid,
+          from: state.label,
+          intendedTo: targetState.label,
+          reason: guard.reason,
+          prUrl,
+          prState: pr?.state ?? status.state,
+          mergeable: pr?.mergeable ?? status.mergeable,
+        });
+
+        if (guard.toLabel) {
+          await provider.transitionLabel(issue.iid, state.label, guard.toLabel);
+          await auditLog(workspaceDir, "terminal_guard_transition", {
+            project: projectName,
+            issueId: issue.iid,
+            from: state.label,
+            to: guard.toLabel,
+            reason: guard.reason,
+            prUrl,
+          });
+          transitions++;
+        }
+
+        continue;
+      }
 
       // Execute transition actions — mergePr is critical (aborts on failure)
       let aborted = false;

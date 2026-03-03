@@ -17,6 +17,7 @@ import {
 } from "../../workflow/index.js";
 import { detectStepRouting } from "../queue-scan.js";
 import { log as auditLog } from "../../audit.js";
+import { guardTerminalCompletion } from "../terminal-guard.js";
 
 /**
  * Scan test queue states and auto-transition issues with test:skip.
@@ -48,6 +49,60 @@ export async function testSkipPass(opts: {
     for (const issue of issues) {
       const routing = detectStepRouting(issue.labels, "test");
       if (routing !== "skip") continue;
+
+      // Pre-terminal guard: never allow Done/closeIssue if PR is conflicting or not merged (auto-merge off).
+      const guard = await guardTerminalCompletion({
+        workflow,
+        provider,
+        issueId: issue.iid,
+        fromLabel: state.label,
+        toState: targetState,
+        actions,
+      });
+
+      if (!guard.allow) {
+        const pr = guard.prStatus;
+        const prUrl = pr?.url ?? null;
+
+        // Best-effort: leave a clear breadcrumb.
+        try {
+          if (guard.reason === "merge_conflict") {
+            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${prUrl ?? "no PR url"}).`);
+          } else if (guard.reason === "pr_not_merged_auto_merge_off") {
+            await provider.addComment(issue.iid, `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${prUrl ?? "no PR url"}). Merge the PR, then the heartbeat will close this issue.`);
+          } else if (guard.reason === "pr_closed_unmerged") {
+            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${prUrl ?? "no PR url"}).`);
+          } else {
+            await provider.addComment(issue.iid, "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.");
+          }
+        } catch { /* best-effort */ }
+
+        await auditLog(workspaceDir, "terminal_completion_blocked", {
+          project: projectName,
+          issueId: issue.iid,
+          from: state.label,
+          intendedTo: targetState.label,
+          reason: guard.reason,
+          prUrl,
+          prState: pr?.state,
+          mergeable: pr?.mergeable,
+        });
+
+        if (guard.toLabel) {
+          await provider.transitionLabel(issue.iid, state.label, guard.toLabel);
+          await auditLog(workspaceDir, "terminal_guard_transition", {
+            project: projectName,
+            issueId: issue.iid,
+            from: state.label,
+            to: guard.toLabel,
+            reason: guard.reason,
+            prUrl,
+          });
+          transitions++;
+        }
+
+        continue;
+      }
 
       // Execute SKIP transition actions
       if (actions) {

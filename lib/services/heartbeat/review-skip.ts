@@ -21,6 +21,7 @@ import { detectStepRouting } from "../queue-scan.js";
 import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
+import { guardTerminalCompletion } from "../terminal-guard.js";
 
 /**
  * Scan review queue states and auto-merge + transition issues with review:skip.
@@ -62,6 +63,47 @@ export async function reviewSkipPass(opts: {
       // Only process issues managed by DevClaw (marked with 👀 on issue body).
       const isManaged = await provider.issueHasReaction(issue.iid, "eyes");
       if (!isManaged) continue;
+
+      // Pre-terminal guard (covers edge-case workflows where review:skip could lead to Done/closeIssue).
+      const guard = await guardTerminalCompletion({
+        workflow,
+        provider,
+        issueId: issue.iid,
+        fromLabel: state.label,
+        toState: targetState,
+        actions,
+      });
+
+      if (!guard.allow) {
+        const pr = guard.prStatus;
+        const prUrl = pr?.url ?? null;
+        try {
+          await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: ${guard.reason} (${prUrl ?? "no PR url"}).`);
+        } catch { /* best-effort */ }
+        await auditLog(workspaceDir, "terminal_completion_blocked", {
+          project: projectName,
+          issueId: issue.iid,
+          from: state.label,
+          intendedTo: targetState.label,
+          reason: guard.reason,
+          prUrl,
+          prState: pr?.state,
+          mergeable: pr?.mergeable,
+        });
+        if (guard.toLabel) {
+          await provider.transitionLabel(issue.iid, state.label, guard.toLabel);
+          await auditLog(workspaceDir, "terminal_guard_transition", {
+            project: projectName,
+            issueId: issue.iid,
+            from: state.label,
+            to: guard.toLabel,
+            reason: guard.reason,
+            prUrl,
+          });
+          transitions++;
+        }
+        continue;
+      }
 
       // Execute SKIP transition actions
       let aborted = false;
