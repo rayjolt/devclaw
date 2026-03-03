@@ -15,6 +15,7 @@ Resolution rules:
 ## Provider failures (fail-closed)
 
 Dependency status is fetched from the issue provider (GitHub/GitLab).
+For GitHub, dependency edges are read from GraphQL `blockedBy` (blockers) and `blocking` (dependents).
 
 - **Transient failures** are retried.
 - If dependency lookup remains unavailable, DevClaw **fails closed** and treats the issue as blocked (it will not dispatch).

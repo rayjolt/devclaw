@@ -238,10 +238,10 @@ export class GitHubProvider implements IssueProvider {
     const query = `{
       repository(owner: "${repo.owner}", name: "${repo.name}") {
         issue(number: ${issueId}) {
-          trackedInIssues(first: 100) {
+          blockedBy(first: 100) {
             nodes { number title state url labels(first: 20) { nodes { name } } }
           }
-          trackedIssues(first: 100) {
+          blocking(first: 100) {
             nodes { number title state url labels(first: 20) { nodes { name } } }
           }
         }
@@ -253,7 +253,7 @@ export class GitHubProvider implements IssueProvider {
     const issue = data?.data?.repository?.issue;
     if (!issue) throw new Error(`Issue #${issueId} not found in repository ${repo.owner}/${repo.name}`);
 
-    const blockers = (issue.trackedInIssues?.nodes ?? []).map((dep: any) => ({
+    const blockers = (issue.blockedBy?.nodes ?? []).map((dep: any) => ({
       iid: dep.number,
       title: dep.title ?? "",
       state: dep.state ?? "",
@@ -262,7 +262,7 @@ export class GitHubProvider implements IssueProvider {
       relation: "blocked_by" as const,
     }));
 
-    const dependents = (issue.trackedIssues?.nodes ?? []).map((dep: any) => ({
+    const dependents = (issue.blocking?.nodes ?? []).map((dep: any) => ({
       iid: dep.number,
       title: dep.title ?? "",
       state: dep.state ?? "",
