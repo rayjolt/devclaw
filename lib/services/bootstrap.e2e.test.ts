@@ -102,8 +102,8 @@ describe("E2E bootstrap — extraSystemPrompt injection", () => {
     });
 
     const prompts = h.commands.extraSystemPrompts();
-    // No prompt files exist in this temp workspace — extraSystemPrompt should be absent
-    assert.strictEqual(prompts.length, 0, "No extraSystemPrompt when no prompt files exist");
+    assert.strictEqual(prompts.length, 1);
+    assert.ok(prompts[0].includes("# DEVELOPER Worker Instructions"));
   });
 
   it("should resolve tester instructions independently from developer", async () => {

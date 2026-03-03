@@ -14,15 +14,23 @@ import path from "node:path";
 
 // esbuild bundles everything into dist/index.js, so import.meta.url points to
 // dist/index.js → one level up reaches the repo root where defaults/ lives.
-const DEFAULTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "defaults");
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULTS_DIR_CANDIDATES = [
+  path.join(moduleDir, "..", "defaults"),
+  path.join(moduleDir, "..", "..", "defaults"),
+];
 
 function loadDefault(filename: string): string {
-  const filePath = path.join(DEFAULTS_DIR, filename);
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch (err) {
-    throw new Error(`Failed to load default file: ${filePath} (${(err as Error).message})`);
+  for (const defaultsDir of DEFAULTS_DIR_CANDIDATES) {
+    const filePath = path.join(defaultsDir, filename);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf-8");
+    }
   }
+
+  throw new Error(
+    `Failed to load default file: ${filename} (searched: ${DEFAULTS_DIR_CANDIDATES.join(", ")})`,
+  );
 }
 
 // ---------------------------------------------------------------------------
