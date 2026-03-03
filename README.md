@@ -578,16 +578,17 @@ Full parameters and usage in the [Tools Reference](docs/TOOLS.md).
 
 ## Documentation
 
-|                                             |                                                              |
-| ------------------------------------------- | ------------------------------------------------------------ |
-| **[Architecture](docs/ARCHITECTURE.md)**    | System design, session model, data flow, end-to-end diagrams |
-| **[Workflow](docs/WORKFLOW.md)**            | State machine, review policies, optional test phase          |
-| **[Tools Reference](docs/TOOLS.md)**        | Complete reference for all tools                             |
-| **[Configuration](docs/CONFIGURATION.md)**  | `openclaw.json`, `projects.json`, roles, timeouts            |
-| **[Onboarding Guide](docs/ONBOARDING.md)**  | Full step-by-step setup                                      |
-| **[Testing](docs/TESTING.md)**              | Test suite, fixtures, CI/CD                                  |
-| **[Management Theory](docs/MANAGEMENT.md)** | The delegation model behind the design                       |
-| **[Roadmap](docs/ROADMAP.md)**              | What's coming next                                           |
+|                                                    |                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| **[Architecture](docs/ARCHITECTURE.md)**           | System design, session model, data flow, end-to-end diagrams |
+| **[Workflow](docs/WORKFLOW.md)**                   | State machine, review policies, optional test phase          |
+| **[Tools Reference](docs/TOOLS.md)**               | Complete reference for all tools                             |
+| **[Configuration](docs/CONFIGURATION.md)**         | `openclaw.json`, `projects.json`, roles, timeouts            |
+| **[Onboarding Guide](docs/ONBOARDING.md)**         | Full step-by-step setup                                      |
+| **[Testing](docs/TESTING.md)**                     | Test suite, fixtures, CI/CD                                  |
+| **[Dependency gating](docs/dependency-gating.md)** | Blocking rules, fail-closed behavior, cycle handling         |
+| **[Management Theory](docs/MANAGEMENT.md)**        | The delegation model behind the design                       |
+| **[Roadmap](docs/ROADMAP.md)**                     | What's coming next                                           |
 
 ---
 
