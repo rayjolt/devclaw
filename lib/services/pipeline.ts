@@ -110,6 +110,69 @@ export async function executeCompletion(opts: {
   let terminalGuardOverrideToLabel: string | null = null;
   let terminalGuardReason: string | null = null;
 
+  // IMPORTANT: pre-terminal guard must run before any terminal side effects.
+  // Pipeline actions can include side effects (merge, close) — so we compute the
+  // guard upfront and then skip any terminal actions if the guard blocks.
+  const intendedTargetState = findStateByLabel(workflow, rule.to);
+  const terminalGuard = intendedTargetState
+    ? await guardTerminalCompletion({
+        workflow,
+        provider,
+        issueId,
+        fromLabel: rule.from,
+        toState: intendedTargetState,
+        actions: rule.actions,
+      })
+    : null;
+
+  const terminalBlocked = terminalGuard?.allow === false;
+  if (terminalGuard && terminalGuard.allow === false) {
+    const pr = terminalGuard.prStatus;
+    const guardPrUrl = pr?.url ?? null;
+    terminalGuardReason = terminalGuard.reason;
+    terminalGuardOverrideToLabel = terminalGuard.toLabel ?? rule.from;
+
+    // Best-effort: leave breadcrumbs for humans.
+    try {
+      if (terminalGuard.reason === "merge_conflict") {
+        await provider.addComment(
+          issueId,
+          `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${guardPrUrl ?? "no PR url"}).`,
+        );
+      } else if (terminalGuard.reason === "pr_not_merged_auto_merge_off") {
+        await provider.addComment(
+          issueId,
+          `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${guardPrUrl ?? "no PR url"}). Merge the PR, then DevClaw will close this issue.`,
+        );
+      } else if (terminalGuard.reason === "pr_closed_unmerged") {
+        await provider.addComment(
+          issueId,
+          `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${guardPrUrl ?? "no PR url"}).`,
+        );
+      } else {
+        await provider.addComment(
+          issueId,
+          "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.",
+        );
+      }
+    } catch {
+      /* best-effort */
+    }
+
+    await auditLog(workspaceDir, "terminal_completion_blocked", {
+      project: projectName,
+      issueId,
+      from: rule.from,
+      intendedTo: rule.to,
+      reason: terminalGuard.reason,
+      prUrl: guardPrUrl,
+      prState: pr?.state,
+      mergeable: pr?.mergeable,
+      correlationId,
+      path: "pipeline",
+    }).catch(() => {});
+  }
+
   for (const action of rule.actions) {
     switch (action) {
       case Action.GIT_PULL:
@@ -150,6 +213,8 @@ export async function executeCompletion(opts: {
         }
         break;
       case Action.MERGE_PR:
+        // If the pre-terminal guard blocks, do not attempt terminal side effects.
+        if (terminalBlocked) break;
         try {
           if (!prTitle) {
             try {
@@ -229,55 +294,9 @@ export async function executeCompletion(opts: {
   let nextState = getNextStateDescription(workflow, role, result);
   const notifyConfig = getNotificationConfig(pluginConfig);
 
-  // Pre-terminal guard (covers pipeline-driven transitions too, not only heartbeat):
-  // never allow terminal completion if PR is conflicting, and when auto-merge is off
-  // do not close until provider reports PR merged.
-  const intendedTargetState = findStateByLabel(workflow, rule.to);
-  if (intendedTargetState) {
-    const guard = await guardTerminalCompletion({
-      workflow,
-      provider,
-      issueId,
-      fromLabel: rule.from,
-      toState: intendedTargetState,
-      actions: rule.actions,
-    });
 
-    if (!guard.allow) {
-      const pr = guard.prStatus;
-      const prUrl = pr?.url ?? null;
-      terminalGuardReason = guard.reason;
-      terminalGuardOverrideToLabel = guard.toLabel ?? rule.from;
-
-      try {
-        if (guard.reason === "merge_conflict") {
-          await provider.addComment(issueId, `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${prUrl ?? "no PR url"}).`);
-        } else if (guard.reason === "pr_not_merged_auto_merge_off") {
-          await provider.addComment(issueId, `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${prUrl ?? "no PR url"}). Merge the PR, then DevClaw will close this issue.`);
-        } else if (guard.reason === "pr_closed_unmerged") {
-          await provider.addComment(issueId, `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${prUrl ?? "no PR url"}).`);
-        } else {
-          await provider.addComment(issueId, "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.");
-        }
-      } catch {
-        /* best-effort */
-      }
-
-      await auditLog(workspaceDir, "terminal_completion_blocked", {
-        project: projectName,
-        issueId,
-        from: rule.from,
-        intendedTo: rule.to,
-        reason: guard.reason,
-        prUrl,
-        prState: pr?.state,
-        mergeable: pr?.mergeable,
-        correlationId,
-        path: "pipeline",
-      }).catch(() => {});
-
-      nextState = `blocked: ${guard.reason}`;
-    }
+  if (terminalBlocked && terminalGuardReason) {
+    nextState = `blocked: ${terminalGuardReason}`;
   }
 
   let workerName: string | undefined;
