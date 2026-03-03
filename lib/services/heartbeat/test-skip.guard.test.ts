@@ -81,4 +81,30 @@ describe("heartbeat/test-skip — terminal completion guard", () => {
       await h.cleanup();
     }
   });
+
+  it("treats mergeable=unknown as non-conflicting (still allows close when PR is merged)", async () => {
+    const h = await createTestHarness();
+    try {
+      h.provider.seedIssue({ iid: 4, title: "Merged (unknown mergeable)", labels: ["To Test", "test:skip"] });
+      // mergeable omitted/unknown — should not be treated as conflicting.
+      h.provider.setPrStatus(4, { state: "merged", url: "https://example.com/pr/4" });
+
+      const n = await testSkipPass({
+        workspaceDir: h.workspaceDir,
+        projectName: h.project.name,
+        workflow: h.workflow,
+        provider: h.provider,
+      });
+
+      assert.equal(n, 1);
+
+      const issue = await h.provider.getIssue(4);
+      assert.ok(issue.labels.includes("Done"), `labels=${issue.labels.join(",")}`);
+      assert.equal(issue.state, "closed");
+
+      assert.equal(h.provider.callsTo("closeIssue").length, 1);
+    } finally {
+      await h.cleanup();
+    }
+  });
 });
