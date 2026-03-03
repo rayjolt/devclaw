@@ -13,6 +13,7 @@ describe("heartbeat/review — terminal completion guard (human review path)", (
     // Custom workflow: approval would normally close immediately (terminal path), and we intentionally
     // omit the explicit MERGE_CONFLICT transition to ensure the shared terminal guard is doing the work.
     const workflow = structuredClone(DEFAULT_WORKFLOW);
+    workflow.states.toReview.on ??= {};
     workflow.states.toReview.on[WorkflowEvent.APPROVED] = { target: "done", actions: [Action.CLOSE_ISSUE] };
     delete (workflow.states.toReview.on as any)[WorkflowEvent.MERGE_CONFLICT];
 
@@ -45,6 +46,7 @@ describe("heartbeat/review — terminal completion guard (human review path)", (
 
     // Custom workflow: approval would close immediately, but it has no mergePr action.
     const workflow = structuredClone(DEFAULT_WORKFLOW);
+    workflow.states.toReview.on ??= {};
     workflow.states.toReview.on[WorkflowEvent.APPROVED] = { target: "done", actions: [Action.CLOSE_ISSUE] };
 
     provider.seedIssue({ iid: 21, title: "Approved but not merged", labels: ["To Review", "review:human"] });
