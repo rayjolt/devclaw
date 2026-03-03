@@ -18,6 +18,21 @@ function issue(iid: number, labels: string[] = ["To Do"]): Issue {
 }
 
 describe("findNextIssueForRole dependency gating", () => {
+  it("dispatches issues with no dependencies", async () => {
+    const provider: QueueProvider = {
+      async listIssuesByLabel() {
+        return [issue(100)];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        return { issueId, blockers: [], dependents: [] };
+      },
+    };
+
+    const next = await findNextIssueForRole(provider, "developer", DEFAULT_WORKFLOW);
+    assert.ok(next);
+    assert.strictEqual(next!.issue.iid, 100);
+  });
+
   it("skips blocked issues and dispatches the next unblocked issue", async () => {
     const provider: QueueProvider = {
       async listIssuesByLabel() {
@@ -127,17 +142,9 @@ describe("findNextIssueForRole dependency gating", () => {
       },
       async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
         if (issueId === 1) {
-          return {
-            issueId,
-            blockers: [{ iid: 2, title: "B", state: "OPEN", web_url: "u", relation: "blocked_by" }],
-            dependents: [],
-          };
+          return { issueId, blockers: [{ iid: 2, title: "B", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
         }
-        return {
-          issueId,
-          blockers: [{ iid: 1, title: "A", state: "OPEN", web_url: "u", relation: "blocked_by" }],
-          dependents: [],
-        };
+        return { issueId, blockers: [{ iid: 1, title: "A", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
       },
     };
 
@@ -172,5 +179,33 @@ describe("findNextIssueForRole dependency gating", () => {
 
     assert.strictEqual(next, null);
     assert.deepStrictEqual(callbackPath, [1, 2, 3, 1]);
+  });
+
+  it("transitions cycle issues to Refining via onCycleDetected hook (integration wiring)", async () => {
+    const transitions: Array<{ issueId: number; from: string; to: string }> = [];
+
+    const provider: QueueProvider & Pick<IssueProvider, "transitionLabel"> = {
+      async listIssuesByLabel(label: string) {
+        return label === "To Do" ? [issue(1)] : [];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        if (issueId === 1) {
+          return { issueId, blockers: [{ iid: 2, title: "B", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
+        }
+        return { issueId, blockers: [{ iid: 1, title: "A", state: "OPEN", web_url: "u", relation: "blocked_by" }], dependents: [] };
+      },
+      async transitionLabel(issueId: number, from: string, to: string): Promise<void> {
+        transitions.push({ issueId, from, to });
+      },
+    };
+
+    const next = await findNextIssueForRole(provider, "developer", DEFAULT_WORKFLOW, undefined, {
+      onCycleDetected: async ({ issue, label }) => {
+        await provider.transitionLabel(issue.iid, label, "Refining");
+      },
+    });
+
+    assert.strictEqual(next, null);
+    assert.deepStrictEqual(transitions, [{ issueId: 1, from: "To Do", to: "Refining" }]);
   });
 });
