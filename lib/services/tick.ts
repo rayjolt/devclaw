@@ -17,6 +17,7 @@ import {
   ExecutionMode,
   ReviewPolicy,
   TestPolicy,
+  StateType,
   getActiveLabel,
   type WorkflowConfig,
   type Role,
@@ -136,7 +137,23 @@ export async function projectTick(opts: {
       }
     }
 
-    const next = await findNextIssueForRole(provider, role, workflow, instanceName);
+    const refiningLabel = Object.values(workflow.states)
+      .find((s) => s.type === StateType.HOLD && s.label.toLowerCase() === "refining")?.label ?? "Refining";
+
+    const next = await findNextIssueForRole(provider, role, workflow, instanceName, {
+      onCycleDetected: async ({ issue, label: currentLabel, reason }) => {
+        try {
+          await provider.transitionLabel(issue.iid, currentLabel, refiningLabel);
+          await provider.addComment(
+            issue.iid,
+            `⚠️ ${reason}\n\nMoved to **${refiningLabel}** automatically. Break the dependency loop, then run \`task_start\` to queue it again.`,
+          );
+          skipped.push({ role, reason: `Issue #${issue.iid} moved to ${refiningLabel}: ${reason}` });
+        } catch (err) {
+          skipped.push({ role, reason: `Issue #${issue.iid} has dependency cycle but auto-move failed: ${(err as Error).message}` });
+        }
+      },
+    });
     if (!next) continue;
 
     const { issue, label: currentLabel } = next;
