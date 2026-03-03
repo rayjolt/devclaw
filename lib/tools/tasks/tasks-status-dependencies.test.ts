@@ -1,11 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { DEFAULT_WORKFLOW } from "../../workflow/index.js";
-import { getBlockedMeta, isBlockingDependency } from "./tasks-status.js";
+import { getDependencyGateStatus } from "../../services/queue-scan.js";
 import type { IssueDependency } from "../../providers/provider.js";
 
-describe("tasks_status dependency visibility", () => {
-  it("marks open blockers as blocking and includes blocker IDs", async () => {
+describe("dependency gating", () => {
+  it("marks open blockers as blocked (kind=dependency) and includes blocker IDs in reason", async () => {
     const provider = {
       async getIssueDependencies(issueId: number) {
         return {
@@ -18,13 +18,13 @@ describe("tasks_status dependency visibility", () => {
       },
     };
 
-    const meta = await getBlockedMeta(provider as any, 2, DEFAULT_WORKFLOW);
-    assert.strictEqual(meta.blocked, true);
-    assert.deepStrictEqual(meta.blockerIds, [10]);
-    assert.match(meta.blockedReason, /#10/);
+    const gate = await getDependencyGateStatus(provider as any, { iid: 2 }, DEFAULT_WORKFLOW);
+    assert.strictEqual(gate.blocked, true);
+    assert.strictEqual(gate.kind, "dependency");
+    assert.match(gate.reason ?? "", /#10/);
   });
 
-  it("treats Rejected blockers as still blocking", () => {
+  it("treats Rejected blockers as still blocking", async () => {
     const blocker: IssueDependency = {
       iid: 11,
       title: "Rejected blocker",
@@ -33,10 +33,18 @@ describe("tasks_status dependency visibility", () => {
       web_url: "u",
       relation: "blocked_by",
     };
-    assert.strictEqual(isBlockingDependency(blocker, DEFAULT_WORKFLOW), true);
+
+    const provider = {
+      async getIssueDependencies(issueId: number) {
+        return { issueId, blockers: [blocker], dependents: [] };
+      },
+    };
+
+    const gate = await getDependencyGateStatus(provider as any, { iid: 2 }, DEFAULT_WORKFLOW);
+    assert.strictEqual(gate.blocked, true);
   });
 
-  it("treats Done blockers as resolved", () => {
+  it("treats Done blockers as resolved", async () => {
     const blocker: IssueDependency = {
       iid: 12,
       title: "Done blocker",
@@ -45,19 +53,27 @@ describe("tasks_status dependency visibility", () => {
       web_url: "u",
       relation: "blocked_by",
     };
-    assert.strictEqual(isBlockingDependency(blocker, DEFAULT_WORKFLOW), false);
+
+    const provider = {
+      async getIssueDependencies(issueId: number) {
+        return { issueId, blockers: [blocker], dependents: [] };
+      },
+    };
+
+    const gate = await getDependencyGateStatus(provider as any, { iid: 2 }, DEFAULT_WORKFLOW);
+    assert.deepStrictEqual(gate, { blocked: false });
   });
 
-  it("surfaces dependency lookup failure as fail-closed blocked reason", async () => {
+  it("surfaces dependency lookup failure as fail-closed blocked (kind=uncertain)", async () => {
     const provider = {
       async getIssueDependencies() {
         throw new Error("provider timeout");
       },
     };
 
-    const meta = await getBlockedMeta(provider as any, 2, DEFAULT_WORKFLOW);
-    assert.strictEqual(meta.blocked, true);
-    assert.strictEqual(meta.dependencyLookupFailed, true);
-    assert.match(meta.blockedReason, /fail-closed/i);
+    const gate = await getDependencyGateStatus(provider as any, { iid: 2 }, DEFAULT_WORKFLOW);
+    assert.strictEqual(gate.blocked, true);
+    assert.strictEqual(gate.kind, "uncertain");
+    assert.match(gate.reason ?? "", /unavailable|failed/i);
   });
 });
