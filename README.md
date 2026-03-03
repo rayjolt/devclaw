@@ -562,7 +562,7 @@ DevClaw gives the orchestrator 23 tools. These aren't just convenience wrappers 
 | `health`               | Detect zombie workers, stale sessions, state inconsistencies                            |
 | `project_register`     | One-time project setup: creates labels, scaffolds instructions, initializes state       |
 | `sync_labels`          | Sync GitHub/GitLab labels with workflow config after editing `workflow.yaml`            |
-| `channel_link`         | Link a chat/channel to a project (auto-detaches previous project)                      |
+| `channel_link`         | Link a chat/channel to a project (auto-detaches previous project)                       |
 | `channel_unlink`       | Remove a channel from a project                                                         |
 | `channel_list`         | List channels for a project or all projects                                             |
 | `setup`                | Agent + workspace initialization                                                        |
