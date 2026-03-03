@@ -81,11 +81,11 @@ describe("loadRoleInstructions", () => {
     await fs.rm(tmpDir, { recursive: true });
   });
 
-  it("should return empty string when no instructions exist", async () => {
+  it("should fall back to package default instructions when no workspace instructions exist", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "devclaw-test-"));
 
     const result = await loadRoleInstructions(tmpDir, "missing", "developer");
-    assert.strictEqual(result, "");
+    assert.ok(result.includes("# DEVELOPER Worker Instructions"));
 
     await fs.rm(tmpDir, { recursive: true });
   });
