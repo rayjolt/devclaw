@@ -178,7 +178,6 @@ export async function tick(opts: {
         maxPickups: remaining,
         runtime,
         instanceName,
-        runtime,
         runCommand,
       });
 
