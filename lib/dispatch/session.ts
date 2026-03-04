@@ -177,6 +177,11 @@ export async function sendToAgent(
   });
 
   try {
+    const gatewayTimeoutMs = 30_000;
+    const wrapperTimeoutMs = Math.max(
+      opts.dispatchTimeoutMs ?? 600_000,
+      gatewayTimeoutMs + 5_000,
+    );
     const result = await rc(
       [
         "openclaw",
@@ -185,10 +190,12 @@ export async function sendToAgent(
         "agent",
         "--params",
         gatewayParams,
+        "--timeout",
+        String(gatewayTimeoutMs),
         "--expect-final",
         "--json",
       ],
-      { timeoutMs: opts.dispatchTimeoutMs ?? 600_000 },
+      { timeoutMs: wrapperTimeoutMs },
     );
     const parsedStdout = tryParseJson(result.stdout);
     const acceptance = parseDispatchAcceptance(result.stdout);
