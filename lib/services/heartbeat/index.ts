@@ -91,6 +91,7 @@ export function registerHeartbeatService(api: OpenClawPluginApi, pluginCtx: Plug
  * (setInterval + async means the next tick can fire while the previous awaits).
  */
 let _tickRunning = false;
+const refreshedWorkspaces = new Set<string>();
 
 async function runHeartbeatTick(
   ctx: PluginContext,
@@ -147,17 +148,8 @@ async function processAllAgents(
     totalTestSkipTransitions: 0,
   };
 
-  // Ensure defaults are fresh on every startup (prompts, workflow, etc.)
-  const refreshedWorkspaces = new Set<string>();
-  for (const { workspace } of agents) {
-    if (refreshedWorkspaces.has(workspace)) continue;
-    refreshedWorkspaces.add(workspace);
-    try {
-      await ensureDefaultFiles(workspace);
-    } catch (err) {
-      logger.warn(`Workspace refresh failed for ${workspace}: ${(err as Error).message}`);
-    }
-  }
+  // Refresh scaffold files once per process/workspace (not once per tick).
+  await refreshWorkspaceScaffolding(agents, logger);
 
   // Fetch gateway sessions once for all agents/projects
   const sessions = await fetchGatewaySessions(undefined, runCommand);
@@ -186,6 +178,26 @@ async function processAllAgents(
   }
 
   return result;
+}
+
+export async function refreshWorkspaceScaffolding(
+  agents: Agent[],
+  logger: ServiceContext["logger"],
+  ensureDefaultFilesImpl: (workspaceDir: string) => Promise<void> = ensureDefaultFiles,
+): Promise<void> {
+  for (const { workspace } of agents) {
+    if (refreshedWorkspaces.has(workspace)) continue;
+    refreshedWorkspaces.add(workspace);
+    try {
+      await ensureDefaultFilesImpl(workspace);
+    } catch (err) {
+      logger.warn(`Workspace refresh failed for ${workspace}: ${(err as Error).message}`);
+    }
+  }
+}
+
+export function resetRefreshedWorkspacesForTests(): void {
+  refreshedWorkspaces.clear();
 }
 
 /**

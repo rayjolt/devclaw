@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Heartbeat scaffold refresh cadence** — Heartbeat now refreshes package-owned workspace scaffold files only once per process/workspace instead of every tick, preventing repeated AGENTS.md/HEARTBEAT.md/TOOLS.md rewrites and `.bak` churn in runtime workspaces (#53).
 - **Critical:** work_finish now re-validates PR mergeable status during conflict resolution cycles, preventing infinite loops where developers claim "fixed" without pushing changes (#482, #480, #464, #483)
 
 ### Improved
