@@ -3,11 +3,13 @@ import assert from "node:assert";
 import { sendToAgent } from "./session.js";
 
 describe("sendToAgent idempotency key", () => {
-  it("includes dispatchAttempt nonce, differs across redispatch attempts, and excludes model from agent payload", async () => {
+  it("includes dispatchAttempt nonce, differs across redispatch attempts, excludes model from payload, and sets gateway timeout flag", async () => {
     const captured: string[] = [];
     const rawParams: Array<Record<string, unknown>> = [];
+    const argvCalls: string[][] = [];
+    const callTimeouts: number[] = [];
 
-    const runCommand: any = async (argv: string[], _opts: any) => {
+    const runCommand: any = async (argv: string[], opts: any) => {
       const paramsIdx = argv.indexOf("--params");
       if (
         argv[0] === "openclaw" &&
@@ -16,6 +18,8 @@ describe("sendToAgent idempotency key", () => {
         argv[3] === "agent" &&
         paramsIdx >= 0
       ) {
+        argvCalls.push(argv);
+        callTimeouts.push(opts?.timeoutMs);
         const params = JSON.parse(argv[paramsIdx + 1]!);
         rawParams.push(params);
         captured.push(params.idempotencyKey);
@@ -65,5 +69,15 @@ describe("sendToAgent idempotency key", () => {
     );
     assert.notStrictEqual(captured[0], captured[1]);
     assert.ok(rawParams.every((params) => !("model" in params)));
+    assert.strictEqual(argvCalls.length, 2);
+    for (const argv of argvCalls) {
+      const timeoutIdx = argv.indexOf("--timeout");
+      assert.ok(timeoutIdx >= 0, "expected --timeout flag in gateway call");
+      assert.strictEqual(argv[timeoutIdx + 1], "30000");
+    }
+    assert.ok(
+      callTimeouts.every((timeoutMs) => Number(timeoutMs) > 30_000),
+      "runCommand timeout should remain above gateway timeout",
+    );
   });
 });
