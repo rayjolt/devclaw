@@ -114,7 +114,7 @@ async function runHeartbeatTick(
     }
 
     if (resolution.ok && resolution.source === "legacy") {
-      logger.warn("work_heartbeat: using legacy DevClaw workspace resolution (agents.list devclaw). Run setup to write plugins.entries.devclaw.config.runtimeWorkspace.");
+      logger.warn("work_heartbeat: using legacy DevClaw workspace resolution (agents.list devclaw). Re-run `devclaw setup` to write plugins.entries.devclaw.config.runtimeWorkspace.");
     }
 
     const result = await processAllAgents(agents, config, ctx.pluginConfig, logger, ctx.runCommand, ctx.runtime, resolution);
