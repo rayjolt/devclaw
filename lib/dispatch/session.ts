@@ -242,7 +242,13 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
   }
 
   if (topStatus === "accepted" || topStatus === "started") {
-    return { accepted: true, status: topStatus, runId, mode: "early-status", raw: parsed };
+    return {
+      accepted: true,
+      status: topStatus,
+      runId,
+      mode: "early-status",
+      raw: parsed,
+    };
   }
 
   if (
@@ -284,11 +290,19 @@ function parseDispatchAcceptance(stdout: string): DispatchAcceptance {
   }
 
   // --expect-final compatibility:
-  // gateway call can return final lifecycle envelope like:
+  // gateway call can return final lifecycle envelopes like:
+  // { status: "ok", runId: "..." }
   // { status: "ok", runId: "...", result: { ... } }
-  // Treat as accepted only when runId exists and result payload is present.
-  if (topStatusRaw === "ok" && runId && result && typeof result === "object") {
-    return { accepted: true, status: "accepted", runId, mode: "final-ok", raw: parsed };
+  // Treat as accepted when transport-level status is ok and runId exists.
+  // Explicit nested failures are handled above, so they cannot be masked here.
+  if (topStatusRaw === "ok" && runId) {
+    return {
+      accepted: true,
+      status: "accepted",
+      runId,
+      mode: "final-ok",
+      raw: parsed,
+    };
   }
 
   if (runId && (o.ok === true || result?.ok === true)) {
