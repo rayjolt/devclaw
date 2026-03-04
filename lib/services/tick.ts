@@ -219,6 +219,12 @@ export async function projectTick(opts: {
             reason: `Issue #${issue.iid}: ${reason ?? "ineligible"}`,
           });
         },
+        onDependencyBlocked: async ({ issue, gate }) => {
+          skipped.push({
+            role,
+            reason: `Issue #${issue.iid}: ${gate.reason ?? "dependency-blocked"}`,
+          });
+        },
         onCycleDetected: async ({ issue, label: currentLabel, reason }) => {
           try {
             await provider.transitionLabel(
