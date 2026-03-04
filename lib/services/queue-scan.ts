@@ -153,6 +153,13 @@ export async function findNextIssueForRole(
       label: StateLabel;
       reason?: string;
     }) => Promise<void>;
+
+    /** Called when an issue is blocked by the dependency gate (or dependency status is uncertain). */
+    onDependencyBlocked?: (args: {
+      issue: Issue;
+      label: StateLabel;
+      gate: DependencyGateStatus;
+    }) => Promise<void>;
   },
 ): Promise<{ issue: Issue; label: StateLabel } | null> {
   const labels = getQueueLabels(workflow, role);
@@ -183,6 +190,17 @@ export async function findNextIssueForRole(
                 `Dependency cycle detected: ${gate.cyclePath.join(" → ")}`,
             });
           }
+
+          if (opts?.onDependencyBlocked) {
+            try {
+              await opts.onDependencyBlocked({ issue, label, gate });
+            } catch (err) {
+              console.warn(
+                `[queue-scan] onDependencyBlocked failed for #${issue.iid} (${label}): ${toErrorMessage(err)}`,
+              );
+            }
+          }
+
           continue;
         }
 
