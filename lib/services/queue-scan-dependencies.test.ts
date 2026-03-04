@@ -208,4 +208,46 @@ describe("findNextIssueForRole dependency gating", () => {
     assert.strictEqual(next, null);
     assert.deepStrictEqual(transitions, [{ issueId: 1, from: "To Do", to: "Refining" }]);
   });
+
+  it("continues scanning when isEligible throws for one issue", async () => {
+    const provider: QueueProvider = {
+      async listIssuesByLabel() {
+        return [issue(1), issue(2)];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        return { issueId, blockers: [], dependents: [] };
+      },
+    };
+
+    const next = await findNextIssueForRole(provider, "developer", DEFAULT_WORKFLOW, undefined, {
+      isEligible: ({ issue }) => {
+        if (issue.iid === 2) throw new Error("boom");
+        return true;
+      },
+    });
+
+    assert.ok(next);
+    assert.strictEqual(next!.issue.iid, 1);
+  });
+
+  it("continues scanning when onIneligible throws for one issue", async () => {
+    const provider: QueueProvider = {
+      async listIssuesByLabel() {
+        return [issue(1), issue(2)];
+      },
+      async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
+        return { issueId, blockers: [], dependents: [] };
+      },
+    };
+
+    const next = await findNextIssueForRole(provider, "developer", DEFAULT_WORKFLOW, undefined, {
+      isEligible: ({ issue }) => ({ ok: issue.iid === 1, reason: "not-ready" }),
+      onIneligible: async () => {
+        throw new Error("callback failed");
+      },
+    });
+
+    assert.ok(next);
+    assert.strictEqual(next!.issue.iid, 1);
+  });
 });

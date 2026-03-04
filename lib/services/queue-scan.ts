@@ -104,6 +104,12 @@ export type DependencyGateStatus = {
   kind?: "dependency" | "cycle" | "uncertain";
 };
 
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return "unknown error";
+}
+
 // ---------------------------------------------------------------------------
 // Issue queue queries
 // ---------------------------------------------------------------------------
@@ -157,7 +163,10 @@ export async function findNextIssueForRole(
         ? issues.filter((i) => isOwnedByOrUnclaimed(i.labels, instanceName))
         : issues;
 
-      for (const issue of eligible.slice().reverse()) {
+      // Providers typically return queue issues newest-first; scan oldest-first
+      // to preserve FIFO semantics within each label queue.
+      const queueOrder = eligible.slice().reverse();
+      for (const issue of queueOrder) {
         const gate = await getDependencyGateStatus(provider, issue, workflow);
         if (gate.blocked) {
           if (
@@ -178,12 +187,26 @@ export async function findNextIssueForRole(
         }
 
         if (opts?.isEligible) {
-          const res = await opts.isEligible({ issue, label });
-          const ok = typeof res === "boolean" ? res : res.ok;
-          const reason = typeof res === "boolean" ? undefined : res.reason;
-          if (!ok) {
-            if (opts.onIneligible)
-              await opts.onIneligible({ issue, label, reason });
+          try {
+            const res = await opts.isEligible({ issue, label });
+            const ok = typeof res === "boolean" ? res : res.ok;
+            const reason = typeof res === "boolean" ? undefined : res.reason;
+            if (!ok) {
+              if (opts.onIneligible) {
+                try {
+                  await opts.onIneligible({ issue, label, reason });
+                } catch (err) {
+                  console.warn(
+                    `[queue-scan] onIneligible failed for #${issue.iid} (${label}): ${toErrorMessage(err)}`,
+                  );
+                }
+              }
+              continue;
+            }
+          } catch (err) {
+            console.warn(
+              `[queue-scan] isEligible failed for #${issue.iid} (${label}): ${toErrorMessage(err)}`,
+            );
             continue;
           }
         }
