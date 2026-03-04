@@ -9,7 +9,14 @@ import type { RunCommand } from "../context.js";
 import type { Issue, IssueProvider } from "../providers/provider.js";
 import { createProvider } from "../providers/index.js";
 import { selectLevel } from "../roles/model-selector.js";
-import { getRoleWorker, getProject, readProjects, findFreeSlot, countActiveSlots, reconcileSlots } from "../projects/index.js";
+import {
+  getRoleWorker,
+  getProject,
+  readProjects,
+  findFreeSlot,
+  countActiveSlots,
+  reconcileSlots,
+} from "../projects/index.js";
 import { dispatchTask } from "../dispatch/index.js";
 import { getLevelsForRole } from "../roles/index.js";
 import { loadConfig } from "../config/index.js";
@@ -22,7 +29,11 @@ import {
   type WorkflowConfig,
   type Role,
 } from "../workflow/index.js";
-import { detectRoleLevelFromLabels, detectStepRouting, findNextIssueForRole } from "./queue-scan.js";
+import {
+  detectRoleLevelFromLabels,
+  detectStepRouting,
+  findNextIssueForRole,
+} from "./queue-scan.js";
 
 // ---------------------------------------------------------------------------
 // projectTick
@@ -73,17 +84,38 @@ export async function projectTick(opts: {
   runCommand?: RunCommand;
 }): Promise<TickResult> {
   const {
-    workspaceDir, projectSlug, agentId, sessionKey, pluginConfig, dryRun,
-    maxPickups, targetRole, runtime, instanceName, runCommand,
+    workspaceDir,
+    projectSlug,
+    agentId,
+    sessionKey,
+    pluginConfig,
+    dryRun,
+    maxPickups,
+    targetRole,
+    runtime,
+    instanceName,
+    runCommand,
   } = opts;
 
   const project = getProject(await readProjects(workspaceDir), projectSlug);
-  if (!project) return { pickups: [], skipped: [{ reason: `Project not found: ${projectSlug}` }] };
+  if (!project)
+    return {
+      pickups: [],
+      skipped: [{ reason: `Project not found: ${projectSlug}` }],
+    };
 
   const resolvedConfig = await loadConfig(workspaceDir, project.name);
   const workflow = opts.workflow ?? resolvedConfig.workflow;
 
-  const provider = opts.provider ?? (await createProvider({ repo: project.repo, provider: project.provider, runCommand: runCommand! })).provider;
+  const provider =
+    opts.provider ??
+    (
+      await createProvider({
+        repo: project.repo,
+        provider: project.provider,
+        runCommand: runCommand!,
+      })
+    ).provider;
   const roleExecution = workflow.roleExecution ?? ExecutionMode.PARALLEL;
   const enabledRoles = Object.entries(resolvedConfig.roles)
     .filter(([, r]) => r.enabled)
@@ -110,7 +142,12 @@ export async function projectTick(opts: {
 
     // Check sequential role execution: any other role must be inactive
     const otherRoles = enabledRoles.filter((r: string) => r !== role);
-    if (roleExecution === ExecutionMode.SEQUENTIAL && otherRoles.some((r: string) => countActiveSlots(getRoleWorker(fresh, r)) > 0)) {
+    if (
+      roleExecution === ExecutionMode.SEQUENTIAL &&
+      otherRoles.some(
+        (r: string) => countActiveSlots(getRoleWorker(fresh, r)) > 0,
+      )
+    ) {
       skipped.push({ role, reason: "Sequential: other role active" });
       continue;
     }
@@ -119,11 +156,18 @@ export async function projectTick(opts: {
     if (role === "reviewer") {
       const policy = workflow.reviewPolicy ?? ReviewPolicy.HUMAN;
       if (policy === ReviewPolicy.HUMAN) {
-        skipped.push({ role, reason: "Review policy: human (heartbeat handles via PR polling)" });
+        skipped.push({
+          role,
+          reason: "Review policy: human (heartbeat handles via PR polling)",
+        });
         continue;
       }
       if (policy === ReviewPolicy.SKIP) {
-        skipped.push({ role, reason: "Review policy: skip (heartbeat handles via review-skip pass)" });
+        skipped.push({
+          role,
+          reason:
+            "Review policy: skip (heartbeat handles via review-skip pass)",
+        });
         continue;
       }
     }
@@ -132,48 +176,77 @@ export async function projectTick(opts: {
     if (role === "tester") {
       const policy = workflow.testPolicy ?? TestPolicy.SKIP;
       if (policy === TestPolicy.SKIP) {
-        skipped.push({ role, reason: "Test policy: skip (heartbeat handles via test-skip pass)" });
+        skipped.push({
+          role,
+          reason: "Test policy: skip (heartbeat handles via test-skip pass)",
+        });
         continue;
       }
     }
 
-    const refiningLabel = Object.values(workflow.states)
-      .find((s) => s.type === StateType.HOLD && s.label.toLowerCase() === "refining")?.label ?? "Refining";
+    const refiningLabel =
+      Object.values(workflow.states).find(
+        (s) =>
+          s.type === StateType.HOLD && s.label.toLowerCase() === "refining",
+      )?.label ?? "Refining";
 
-    const next = await findNextIssueForRole(provider, role, workflow, instanceName, {
-      onCycleDetected: async ({ issue, label: currentLabel, reason }) => {
-        try {
-          await provider.transitionLabel(issue.iid, currentLabel, refiningLabel);
-          await provider.addComment(
-            issue.iid,
-            `⚠️ ${reason}\n\nMoved to **${refiningLabel}** automatically. Break the dependency loop, then run \`task_start\` to queue it again.`,
-          );
-          skipped.push({ role, reason: `Issue #${issue.iid} moved to ${refiningLabel}: ${reason}` });
-        } catch (err) {
-          skipped.push({ role, reason: `Issue #${issue.iid} has dependency cycle but auto-move failed: ${(err as Error).message}` });
-        }
+    const next = await findNextIssueForRole(
+      provider,
+      role,
+      workflow,
+      instanceName,
+      {
+        // Step routing: check for review:human / review:skip / test:skip labels.
+        // IMPORTANT: this must be part of the queue scan (not post-selection),
+        // otherwise a single ineligible head-of-queue issue can starve eligible
+        // items behind it.
+        isEligible: ({ issue }) => {
+          if (role === "reviewer") {
+            const routing = detectStepRouting(issue.labels, "review");
+            if (routing === "human" || routing === "skip")
+              return { ok: false, reason: `review:${routing} label` };
+          }
+          if (role === "tester") {
+            const routing = detectStepRouting(issue.labels, "test");
+            if (routing === "skip")
+              return { ok: false, reason: "test:skip label" };
+          }
+          return { ok: true };
+        },
+        onIneligible: async ({ issue, reason }) => {
+          skipped.push({
+            role,
+            reason: `Issue #${issue.iid}: ${reason ?? "ineligible"}`,
+          });
+        },
+        onCycleDetected: async ({ issue, label: currentLabel, reason }) => {
+          try {
+            await provider.transitionLabel(
+              issue.iid,
+              currentLabel,
+              refiningLabel,
+            );
+            await provider.addComment(
+              issue.iid,
+              `⚠️ ${reason}\n\nMoved to **${refiningLabel}** automatically. Break the dependency loop, then run \`task_start\` to queue it again.`,
+            );
+            skipped.push({
+              role,
+              reason: `Issue #${issue.iid} moved to ${refiningLabel}: ${reason}`,
+            });
+          } catch (err) {
+            skipped.push({
+              role,
+              reason: `Issue #${issue.iid} has dependency cycle but auto-move failed: ${(err as Error).message}`,
+            });
+          }
+        },
       },
-    });
+    );
     if (!next) continue;
 
     const { issue, label: currentLabel } = next;
     const targetLabel = getActiveLabel(workflow, role);
-
-    // Step routing: check for review:human / review:skip / test:skip labels
-    if (role === "reviewer") {
-      const routing = detectStepRouting(issue.labels, "review");
-      if (routing === "human" || routing === "skip") {
-        skipped.push({ role, reason: `review:${routing} label` });
-        continue;
-      }
-    }
-    if (role === "tester") {
-      const routing = detectStepRouting(issue.labels, "test");
-      if (routing === "skip") {
-        skipped.push({ role, reason: "test:skip label" });
-        continue;
-      }
-    }
 
     // Level selection: label → heuristic (must happen before free slot check)
     const selectedLevel = resolveLevelForIssue(issue, role);
@@ -186,19 +259,33 @@ export async function projectTick(opts: {
     }
 
     if (dryRun) {
-      const existingSession = roleWorker.levels[selectedLevel]?.[freeSlot]?.sessionKey;
+      const existingSession =
+        roleWorker.levels[selectedLevel]?.[freeSlot]?.sessionKey;
       pickups.push({
-        project: project.name, projectSlug, issueId: issue.iid, issueTitle: issue.title, issueUrl: issue.web_url,
-        role, level: selectedLevel,
+        project: project.name,
+        projectSlug,
+        issueId: issue.iid,
+        issueTitle: issue.title,
+        issueUrl: issue.web_url,
+        role,
+        level: selectedLevel,
         sessionAction: existingSession ? "send" : "spawn",
         announcement: `[DRY RUN] Would pick up #${issue.iid}`,
       });
     } else {
       try {
         const dr = await dispatchTask({
-          workspaceDir, agentId, project: fresh, issueId: issue.iid,
-          issueTitle: issue.title, issueDescription: issue.description ?? "", issueUrl: issue.web_url,
-          role, level: selectedLevel, fromLabel: currentLabel, toLabel: targetLabel,
+          workspaceDir,
+          agentId,
+          project: fresh,
+          issueId: issue.iid,
+          issueTitle: issue.title,
+          issueDescription: issue.description ?? "",
+          issueUrl: issue.web_url,
+          role,
+          level: selectedLevel,
+          fromLabel: currentLabel,
+          toLabel: targetLabel,
           provider,
           pluginConfig,
           sessionKey,
@@ -208,11 +295,21 @@ export async function projectTick(opts: {
           runCommand: runCommand!,
         });
         pickups.push({
-          project: project.name, projectSlug, issueId: issue.iid, issueTitle: issue.title, issueUrl: issue.web_url,
-          role, level: dr.level, sessionAction: dr.sessionAction, announcement: dr.announcement,
+          project: project.name,
+          projectSlug,
+          issueId: issue.iid,
+          issueTitle: issue.title,
+          issueUrl: issue.web_url,
+          role,
+          level: dr.level,
+          sessionAction: dr.sessionAction,
+          announcement: dr.announcement,
         });
       } catch (err) {
-        skipped.push({ role, reason: `Dispatch failed: ${(err as Error).message}` });
+        skipped.push({
+          role,
+          reason: `Dispatch failed: ${(err as Error).message}`,
+        });
         continue;
       }
     }

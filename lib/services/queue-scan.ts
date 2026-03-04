@@ -4,7 +4,12 @@
  * Shared by: tick (projectTick), work-start (auto-pickup), and other consumers
  * that need to find queued issues or detect roles/levels from labels.
  */
-import type { Issue, IssueDependency, IssueDependencies, StateLabel } from "../providers/provider.js";
+import type {
+  Issue,
+  IssueDependency,
+  IssueDependencies,
+  StateLabel,
+} from "../providers/provider.js";
 import type { IssueProvider } from "../providers/provider.js";
 import { getLevelsForRole, getAllLevels } from "../roles/index.js";
 import {
@@ -74,7 +79,8 @@ export function detectRoleLevelFromLabels(
  * Returns the routing value for the given step, or null if no routing label exists.
  */
 export function detectStepRouting(
-  labels: string[], step: string,
+  labels: string[],
+  step: string,
 ): string | null {
   const prefix = `${step}:`;
   const match = labels.find((l) => l.toLowerCase().startsWith(prefix));
@@ -109,11 +115,37 @@ export async function findNextIssueForRole(
   workflow: WorkflowConfig,
   instanceName?: string,
   opts?: {
+    /**
+     * Called when a dependency cycle is detected and the caller wants to take
+     * action (e.g. move issue to Refining).
+     */
     onCycleDetected?: (args: {
       issue: Issue;
       label: StateLabel;
       cyclePath: number[];
       reason: string;
+    }) => Promise<void>;
+
+    /**
+     * Optional eligibility predicate for role-specific gates beyond dependency
+     * checks (e.g. review:human, test:skip).
+     *
+     * If it returns false, the scan continues to the next issue.
+     */
+    isEligible?: (args: {
+      issue: Issue;
+      label: StateLabel;
+    }) =>
+      | boolean
+      | Promise<boolean>
+      | { ok: boolean; reason?: string }
+      | Promise<{ ok: boolean; reason?: string }>;
+
+    /** Called when an issue is skipped due to isEligible returning false. */
+    onIneligible?: (args: {
+      issue: Issue;
+      label: StateLabel;
+      reason?: string;
     }) => Promise<void>;
   },
 ): Promise<{ issue: Issue; label: StateLabel } | null> {
@@ -127,18 +159,40 @@ export async function findNextIssueForRole(
 
       for (const issue of eligible.slice().reverse()) {
         const gate = await getDependencyGateStatus(provider, issue, workflow);
-        if (!gate.blocked) return { issue, label };
-
-        if (gate.kind === "cycle" && gate.cyclePath && opts?.onCycleDetected) {
-          await opts.onCycleDetected({
-            issue,
-            label,
-            cyclePath: gate.cyclePath,
-            reason: gate.reason ?? `Dependency cycle detected: ${gate.cyclePath.join(" → ")}`,
-          });
+        if (gate.blocked) {
+          if (
+            gate.kind === "cycle" &&
+            gate.cyclePath &&
+            opts?.onCycleDetected
+          ) {
+            await opts.onCycleDetected({
+              issue,
+              label,
+              cyclePath: gate.cyclePath,
+              reason:
+                gate.reason ??
+                `Dependency cycle detected: ${gate.cyclePath.join(" → ")}`,
+            });
+          }
+          continue;
         }
+
+        if (opts?.isEligible) {
+          const res = await opts.isEligible({ issue, label });
+          const ok = typeof res === "boolean" ? res : res.ok;
+          const reason = typeof res === "boolean" ? undefined : res.reason;
+          if (!ok) {
+            if (opts.onIneligible)
+              await opts.onIneligible({ issue, label, reason });
+            continue;
+          }
+        }
+
+        return { issue, label };
       }
-    } catch { /* continue */ }
+    } catch {
+      /* continue */
+    }
   }
   return null;
 }
@@ -159,10 +213,17 @@ export async function getDependencyGateStatus(
   }
   depCache.set(issue.iid, deps);
 
-  const unresolved = deps.blockers.filter((blocker) => !isResolvedBlocker(blocker, workflow));
+  const unresolved = deps.blockers.filter(
+    (blocker) => !isResolvedBlocker(blocker, workflow),
+  );
   if (unresolved.length === 0) return { blocked: false };
 
-  const cyclePath = await detectCyclePath(provider, issue.iid, workflow, depCache);
+  const cyclePath = await detectCyclePath(
+    provider,
+    issue.iid,
+    workflow,
+    depCache,
+  );
   if (cyclePath) {
     return {
       blocked: true,
@@ -180,7 +241,10 @@ export async function getDependencyGateStatus(
   };
 }
 
-function isResolvedBlocker(blocker: IssueDependency, workflow: WorkflowConfig): boolean {
+function isResolvedBlocker(
+  blocker: IssueDependency,
+  workflow: WorkflowConfig,
+): boolean {
   const labels = blocker.labels ?? [];
 
   // Explicit requirement: Rejected blockers remain blocking.
@@ -206,7 +270,10 @@ async function detectCyclePath(
 ): Promise<number[] | null> {
   const visited = new Set<number>([startIssueId]);
 
-  const dfs = async (nodeId: number, path: number[]): Promise<number[] | null> => {
+  const dfs = async (
+    nodeId: number,
+    path: number[],
+  ): Promise<number[] | null> => {
     let deps = cache.get(nodeId);
     if (deps === undefined) {
       deps = await getIssueDependenciesWithRetry(provider, nodeId, 3);
@@ -214,7 +281,9 @@ async function detectCyclePath(
     }
     if (!deps) return null;
 
-    for (const blocker of deps.blockers.filter((b) => !isResolvedBlocker(b, workflow))) {
+    for (const blocker of deps.blockers.filter(
+      (b) => !isResolvedBlocker(b, workflow),
+    )) {
       if (blocker.iid === startIssueId) return [...path, startIssueId];
       if (visited.has(blocker.iid)) continue;
       visited.add(blocker.iid);
@@ -262,8 +331,11 @@ export async function findNextIssue(
       const eligible = instanceName
         ? issues.filter((i) => isOwnedByOrUnclaimed(i.labels, instanceName))
         : issues;
-      if (eligible.length > 0) return { issue: eligible[eligible.length - 1]!, label };
-    } catch { /* continue */ }
+      if (eligible.length > 0)
+        return { issue: eligible[eligible.length - 1]!, label };
+    } catch {
+      /* continue */
+    }
   }
   return null;
 }
