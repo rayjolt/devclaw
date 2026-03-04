@@ -23,6 +23,8 @@ export async function log(
  * Global audit log for runtime failures that happen *before* a workspace binding
  * can be resolved.
  *
+ * Location: ~/.openclaw/devclaw-runtime/audit.log
+ *
  * Intentionally NOT written into any OpenClaw workspace to avoid accidental drift.
  */
 export async function logGlobal(
@@ -51,6 +53,7 @@ async function append(
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       await mkdir(dirname(filePath), { recursive: true });
       await appendFile(filePath, entry + "\n");
+      await truncateIfNeeded(filePath);
     }
     // Audit logging should never break the tool — silently ignore other errors
   }
