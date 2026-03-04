@@ -8,8 +8,8 @@
  * Listens for incoming messages with media and issue references (#N).
  * When both are present, reads the local file and associates it with the issue.
  */
-import { homedir } from "node:os";
-import path from "node:path";
+import { resolveRuntimeWorkspace } from "../runtime/workspace-resolution.js";
+import { logGlobal as auditLogGlobal } from "../audit.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { PluginContext } from "../context.js";
 import {
@@ -50,18 +50,6 @@ async function resolveProjectFromChannel(
 }
 
 /**
- * Resolve the workspace directory from OpenClaw config.
- * Checks agents.defaults.workspace, then falls back to ~/.openclaw/workspace-devclaw.
- */
-function resolveWorkspaceDir(config: Record<string, unknown>): string | null {
-  const agents = config.agents as { defaults?: { workspace?: string }; list?: Array<{ id: string; workspace?: string }> } | undefined;
-  if (agents?.defaults?.workspace) return agents.defaults.workspace;
-  const devclaw = agents?.list?.find((a) => a.id === "devclaw");
-  if (devclaw?.workspace) return devclaw.workspace;
-  return path.join(homedir(), ".openclaw", "workspace-devclaw");
-}
-
-/**
  * Register the message_received hook for attachment handling.
  *
  * Channel-agnostic: OpenClaw downloads media from all channels and stores
@@ -80,9 +68,21 @@ export function registerAttachmentHook(api: OpenClawPluginApi, ctx: PluginContex
     const issueIds = extractIssueReferences(event.content ?? "");
     if (issueIds.length === 0) return;
 
-    // Resolve workspace directory
-    const workspaceDir = resolveWorkspaceDir(ctx.config as unknown as Record<string, unknown>);
-    if (!workspaceDir) return;
+    // Resolve DevClaw runtime workspace binding (fail closed)
+    const resolution = resolveRuntimeWorkspace({
+      config: ctx.config as any,
+      pluginConfig: ctx.pluginConfig,
+      requireExists: true,
+    });
+    if (!resolution.ok) {
+      ctx.logger.error(`Attachment hook skipped: ${resolution.error}`);
+      await auditLogGlobal("attachment_hook_skipped", {
+        reason: resolution.error,
+      }).catch(() => {});
+      return;
+    }
+
+    const workspaceDir = resolution.workspaceDir;
 
     const conversationId = eventCtx.conversationId;
     if (!conversationId) return;
