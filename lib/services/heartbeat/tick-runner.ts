@@ -45,6 +45,10 @@ export type TickResult = {
 export async function tick(opts: {
   workspaceDir: string;
   agentId?: string;
+  /** Explicit workspace resolution metadata for auditing. */
+  resolvedWorkspaceDir?: string;
+  resolvedAgentId?: string;
+  resolutionSource?: "binding" | "legacy" | "error";
   config: HeartbeatConfig;
   pluginConfig?: Record<string, unknown>;
   sessions: SessionLookup | null;
@@ -72,17 +76,6 @@ export async function tick(opts: {
   const data = await readProjects(workspaceDir);
   const slugs = Object.keys(data.projects);
 
-  if (slugs.length === 0) {
-    return {
-      totalPickups: 0,
-      totalHealthFixes: 0,
-      totalSkipped: 0,
-      totalReviewTransitions: 0,
-      totalReviewSkipTransitions: 0,
-      totalTestSkipTransitions: 0,
-    };
-  }
-
   const result: TickResult = {
     totalPickups: 0,
     totalHealthFixes: 0,
@@ -91,6 +84,24 @@ export async function tick(opts: {
     totalReviewSkipTransitions: 0,
     totalTestSkipTransitions: 0,
   };
+
+  // If there are no projects yet, still emit an audited tick for visibility.
+  if (slugs.length === 0) {
+    await auditLog(workspaceDir, "heartbeat_tick", {
+      resolvedWorkspaceDir: opts.resolvedWorkspaceDir ?? workspaceDir,
+      resolvedAgentId: opts.resolvedAgentId ?? agentId ?? null,
+      resolutionSource: opts.resolutionSource ?? null,
+      projectsScanned: 0,
+      healthFixes: 0,
+      reviewTransitions: 0,
+      reviewSkipTransitions: 0,
+      testSkipTransitions: 0,
+      pickups: 0,
+      skipped: 0,
+    });
+
+    return result;
+  }
 
   const projectExecution =
     (pluginConfig?.projectExecution as string) ?? ExecutionMode.PARALLEL;
@@ -196,6 +207,9 @@ export async function tick(opts: {
   }
 
   await auditLog(workspaceDir, "heartbeat_tick", {
+    resolvedWorkspaceDir: opts.resolvedWorkspaceDir ?? workspaceDir,
+    resolvedAgentId: opts.resolvedAgentId ?? agentId ?? null,
+    resolutionSource: opts.resolutionSource ?? null,
     projectsScanned: slugs.length,
     healthFixes: result.totalHealthFixes,
     reviewTransitions: result.totalReviewTransitions,

@@ -23,6 +23,7 @@ export async function writePluginConfig(
   runtime: PluginRuntime,
   agentId?: string,
   projectExecution?: ExecutionMode,
+  workspaceDir?: string,
 ): Promise<void> {
   const config = runtime.config.loadConfig() as Record<string, unknown>;
 
@@ -30,6 +31,14 @@ export async function writePluginConfig(
 
   if (projectExecution) {
     (config as any).plugins.entries.devclaw.config.projectExecution = projectExecution;
+  }
+
+  // Authoritative runtime workspace binding (used by heartbeat + hooks)
+  if (agentId && workspaceDir) {
+    (config as any).plugins.entries.devclaw.config.runtimeWorkspace = {
+      agentId,
+      workspaceDir,
+    };
   }
 
   // Clean up legacy models from openclaw.json (moved to workflow.yaml)

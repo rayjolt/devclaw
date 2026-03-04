@@ -18,6 +18,8 @@ import {
 } from "./health.js";
 import type { Agent } from "./agent-discovery.js";
 import { discoverAgents } from "./agent-discovery.js";
+import { logGlobal as auditLogGlobal } from "../../audit.js";
+import type { WorkspaceResolutionResult } from "../../runtime/workspace-resolution.js";
 import { HEARTBEAT_DEFAULTS, resolveHeartbeatConfig } from "./config.js";
 import type { HeartbeatConfig } from "./config.js";
 
@@ -100,10 +102,22 @@ async function runHeartbeatTick(
     const config = resolveHeartbeatConfig(ctx.pluginConfig);
     if (!config.enabled) return;
 
-    const agents = discoverAgents(ctx.config);
-    if (agents.length === 0) return;
+    const { agents, resolution } = discoverAgents(ctx.config, ctx.pluginConfig);
+    if (agents.length === 0) {
+      // Fail closed: do not scan defaults or infer workspaces.
+      logger.error(`work_heartbeat tick skipped: ${resolution.ok ? "no agents" : resolution.error}`);
+      await auditLogGlobal("heartbeat_tick_skipped", {
+        reason: resolution.ok ? "no agents resolved" : resolution.error,
+        resolutionSource: resolution.ok ? resolution.source : "error",
+      }).catch(() => {});
+      return;
+    }
 
-    const result = await processAllAgents(agents, config, ctx.pluginConfig, logger, ctx.runCommand, ctx.runtime);
+    if (resolution.ok && resolution.source === "legacy") {
+      logger.warn("work_heartbeat: using legacy DevClaw workspace resolution (agents.list devclaw). Run setup to write plugins.entries.devclaw.config.runtimeWorkspace.");
+    }
+
+    const result = await processAllAgents(agents, config, ctx.pluginConfig, logger, ctx.runCommand, ctx.runtime, resolution);
     logTickResult(result, logger);
   } catch (err) {
     logger.error(`work_heartbeat tick failed: ${err}`);
@@ -121,7 +135,8 @@ async function processAllAgents(
   pluginConfig: Record<string, unknown> | undefined,
   logger: ServiceContext["logger"],
   runCommand: import("../../context.js").RunCommand,
-  runtime?: PluginRuntime,
+  runtime: PluginRuntime | undefined,
+  resolution: WorkspaceResolutionResult,
 ): Promise<TickResult> {
   const result: TickResult = {
     totalPickups: 0,
@@ -151,6 +166,9 @@ async function processAllAgents(
     const agentResult = await tick({
       workspaceDir: workspace,
       agentId,
+      resolvedWorkspaceDir: workspace,
+      resolvedAgentId: agentId,
+      resolutionSource: resolution.ok ? resolution.source : "error",
       config,
       pluginConfig,
       sessions,
