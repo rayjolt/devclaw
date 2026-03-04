@@ -3,8 +3,9 @@ import assert from "node:assert";
 import { sendToAgent } from "./session.js";
 
 describe("sendToAgent idempotency key", () => {
-  it("includes dispatchAttempt nonce and differs across redispatch attempts", async () => {
+  it("includes dispatchAttempt nonce, differs across redispatch attempts, and excludes model from agent payload", async () => {
     const captured: string[] = [];
+    const rawParams: Array<Record<string, unknown>> = [];
 
     const runCommand: any = async (argv: string[], _opts: any) => {
       const paramsIdx = argv.indexOf("--params");
@@ -16,6 +17,7 @@ describe("sendToAgent idempotency key", () => {
         paramsIdx >= 0
       ) {
         const params = JSON.parse(argv[paramsIdx + 1]!);
+        rawParams.push(params);
         captured.push(params.idempotencyKey);
       }
       return {
@@ -36,6 +38,7 @@ describe("sendToAgent idempotency key", () => {
       slotIndex: 0,
       dispatchAttempt: 1,
       workspaceDir: "/tmp",
+      model: "openai/gpt-5",
       runCommand,
     });
 
@@ -47,6 +50,7 @@ describe("sendToAgent idempotency key", () => {
       slotIndex: 0,
       dispatchAttempt: 2,
       workspaceDir: "/tmp",
+      model: "openai/gpt-5",
       runCommand,
     });
 
@@ -60,5 +64,6 @@ describe("sendToAgent idempotency key", () => {
       captured[1]!.includes("-0-2-agent:test:subagent:proj-dev-senior-ada"),
     );
     assert.notStrictEqual(captured[0], captured[1]);
+    assert.ok(rawParams.every((params) => !("model" in params)));
   });
 });
