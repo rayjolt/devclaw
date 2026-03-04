@@ -167,7 +167,6 @@ export async function sendToAgent(
     ...(opts.extraSystemPrompt
       ? { extraSystemPrompt: opts.extraSystemPrompt }
       : {}),
-    ...(opts.model ? { model: opts.model } : {}),
   };
   const gatewayParams = JSON.stringify(gatewayParamsObj);
   await auditLog(opts.workspaceDir, "dispatch_debug", {
