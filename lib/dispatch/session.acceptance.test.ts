@@ -86,7 +86,7 @@ describe("sendToAgent acceptance parsing", () => {
     assert.strictEqual(out.mode, "accepted-flag");
   });
 
-  it("fails closed for malformed final-mode responses", async () => {
+  it("accepts final envelope when status=ok + runId (no result payload)", async () => {
     const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
       projectName: "proj",
       issueId: 25,
@@ -96,9 +96,44 @@ describe("sendToAgent acceptance parsing", () => {
       runCommand: mkRunCommand('{"status":"ok","runId":"run-final"}'),
     });
 
+    assert.strictEqual(out.accepted, true);
+    assert.strictEqual(out.status, "accepted");
+    assert.strictEqual(out.runId, "run-final");
+    assert.strictEqual(out.mode, "final-ok");
+  });
+
+  it("fails closed when status=ok but runId is missing", async () => {
+    const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
+      projectName: "proj",
+      issueId: 25,
+      role: "developer",
+      level: "medior",
+      workspaceDir: "/tmp",
+      runCommand: mkRunCommand('{"status":"ok"}'),
+    });
+
     assert.strictEqual(out.accepted, false);
     assert.strictEqual(out.status, "failed");
     assert.match(String(out.reason), /did not include acceptance status/i);
     assert.strictEqual(out.mode, "invalid");
+  });
+
+  it("does not mask explicit top-level failures even when runId exists", async () => {
+    const out = await sendToAgent("agent:test:subagent:proj-dev", "msg", {
+      projectName: "proj",
+      issueId: 25,
+      role: "developer",
+      level: "medior",
+      workspaceDir: "/tmp",
+      runCommand: mkRunCommand(
+        '{"status":"rejected","runId":"run-final","reason":"policy denied"}',
+      ),
+    });
+
+    assert.strictEqual(out.accepted, false);
+    assert.strictEqual(out.status, "rejected");
+    assert.strictEqual(out.runId, "run-final");
+    assert.strictEqual(out.reason, "policy denied");
+    assert.strictEqual(out.mode, "explicit-failure");
   });
 });
