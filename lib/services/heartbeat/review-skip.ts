@@ -22,6 +22,7 @@ import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
+import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
 
 /**
  * Scan review queue states and auto-merge + transition issues with review:skip.
@@ -35,23 +36,41 @@ export async function reviewSkipPass(opts: {
   repoPath: string;
   gitPullTimeoutMs?: number;
   /** Called after a successful PR merge (for notifications). */
-  onMerge?: (issueId: number, prUrl: string | null, prTitle?: string, sourceBranch?: string) => void;
+  onMerge?: (
+    issueId: number,
+    prUrl: string | null,
+    prTitle?: string,
+    sourceBranch?: string,
+  ) => void;
   runCommand: RunCommand;
 }): Promise<number> {
   const rc = opts.runCommand;
-  const { workspaceDir, projectName, workflow, provider, repoPath, gitPullTimeoutMs = 30_000, onMerge } = opts;
+  const {
+    workspaceDir,
+    projectName,
+    workflow,
+    provider,
+    repoPath,
+    gitPullTimeoutMs = 30_000,
+    onMerge,
+  } = opts;
   let transitions = 0;
 
   // Find review queue states (role=reviewer, type=queue) that have a SKIP event
-  const reviewQueueStates = Object.entries(workflow.states)
-    .filter(([, s]) => s.role === "reviewer" && s.type === StateType.QUEUE) as [string, StateConfig][];
+  const reviewQueueStates = Object.entries(workflow.states).filter(
+    ([, s]) => s.role === "reviewer" && s.type === StateType.QUEUE,
+  ) as [string, StateConfig][];
 
   for (const [_stateKey, state] of reviewQueueStates) {
     const skipTransition = state.on?.[WorkflowEvent.SKIP];
     if (!skipTransition) continue;
 
-    const targetKey = typeof skipTransition === "string" ? skipTransition : skipTransition.target;
-    const actions = typeof skipTransition === "object" ? skipTransition.actions : undefined;
+    const targetKey =
+      typeof skipTransition === "string"
+        ? skipTransition
+        : skipTransition.target;
+    const actions =
+      typeof skipTransition === "object" ? skipTransition.actions : undefined;
     const targetState = workflow.states[targetKey];
     if (!targetState) continue;
 
@@ -78,8 +97,15 @@ export async function reviewSkipPass(opts: {
         const pr = guard.prStatus;
         const prUrl = pr?.url ?? null;
         try {
-          await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: ${guard.reason} (${prUrl ?? "no PR url"}).`);
-        } catch { /* best-effort */ }
+          await postTerminalBlockedCommentOnce({
+            provider,
+            issueId: issue.iid,
+            reason: guard.reason,
+            prUrl,
+          });
+        } catch {
+          /* best-effort */
+        }
         await auditLog(workspaceDir, "terminal_completion_blocked", {
           project: projectName,
           issueId: issue.iid,
@@ -114,14 +140,23 @@ export async function reviewSkipPass(opts: {
               const status = await provider.getPrStatus(issue.iid);
               // Already merged externally — skip the merge call but continue.
               if (status.state === PrState.MERGED) {
-                onMerge?.(issue.iid, status.url, status.title, status.sourceBranch);
+                onMerge?.(
+                  issue.iid,
+                  status.url,
+                  status.title,
+                  status.sourceBranch,
+                );
                 break;
               }
               // No PR exists — skip merge (work may have been committed directly).
               if (!status.url) break;
 
               if (workflow.ciGating) {
-                const { status: ci } = await getCiStatusWithRetry(provider, issue.iid, 3);
+                const { status: ci } = await getCiStatusWithRetry(
+                  provider,
+                  issue.iid,
+                  3,
+                );
                 if (ci.state === CiState.PENDING) {
                   await auditLog(workspaceDir, "review_skip_ci_pending", {
                     project: projectName,
@@ -133,13 +168,29 @@ export async function reviewSkipPass(opts: {
                   break;
                 }
                 if (ci.state === CiState.FAIL || ci.state === CiState.UNKNOWN) {
-                  const failedTransition = state.on?.[WorkflowEvent.CHANGES_REQUESTED] ?? state.on?.[WorkflowEvent.MERGE_FAILED];
+                  const failedTransition =
+                    state.on?.[WorkflowEvent.CHANGES_REQUESTED] ??
+                    state.on?.[WorkflowEvent.MERGE_FAILED];
                   if (failedTransition) {
-                    const failedKey = typeof failedTransition === "string" ? failedTransition : failedTransition.target;
+                    const failedKey =
+                      typeof failedTransition === "string"
+                        ? failedTransition
+                        : failedTransition.target;
                     const failedState = workflow.states[failedKey];
                     if (failedState) {
-                      await provider.transitionLabel(issue.iid, state.label, failedState.label);
-                      try { await provider.addComment(issue.iid, `⚠️ CI gate blocked auto-merge: ${ciDiagnostics(ci)}`); } catch { /* best effort */ }
+                      await provider.transitionLabel(
+                        issue.iid,
+                        state.label,
+                        failedState.label,
+                      );
+                      try {
+                        await provider.addComment(
+                          issue.iid,
+                          `⚠️ CI gate blocked auto-merge: ${ciDiagnostics(ci)}`,
+                        );
+                      } catch {
+                        /* best effort */
+                      }
                       transitions++;
                     }
                   }
@@ -150,7 +201,12 @@ export async function reviewSkipPass(opts: {
 
               try {
                 await provider.mergePr(issue.iid);
-                onMerge?.(issue.iid, status.url, status.title, status.sourceBranch);
+                onMerge?.(
+                  issue.iid,
+                  status.url,
+                  status.title,
+                  status.sourceBranch,
+                );
               } catch (err) {
                 // Merge failed → fire MERGE_FAILED transition if configured
                 await auditLog(workspaceDir, "review_skip_merge_failed", {
@@ -161,10 +217,17 @@ export async function reviewSkipPass(opts: {
                 });
                 const failedTransition = state.on?.[WorkflowEvent.MERGE_FAILED];
                 if (failedTransition) {
-                  const failedKey = typeof failedTransition === "string" ? failedTransition : failedTransition.target;
+                  const failedKey =
+                    typeof failedTransition === "string"
+                      ? failedTransition
+                      : failedTransition.target;
                   const failedState = workflow.states[failedKey];
                   if (failedState) {
-                    await provider.transitionLabel(issue.iid, state.label, failedState.label);
+                    await provider.transitionLabel(
+                      issue.iid,
+                      state.label,
+                      failedState.label,
+                    );
                     transitions++;
                   }
                 }
@@ -173,13 +236,28 @@ export async function reviewSkipPass(opts: {
               break;
             }
             case Action.GIT_PULL:
-              try { await rc(["git", "pull"], { timeoutMs: gitPullTimeoutMs, cwd: repoPath }); } catch { /* best-effort */ }
+              try {
+                await rc(["git", "pull"], {
+                  timeoutMs: gitPullTimeoutMs,
+                  cwd: repoPath,
+                });
+              } catch {
+                /* best-effort */
+              }
               break;
             case Action.CLOSE_ISSUE:
-              try { await provider.closeIssue(issue.iid); } catch { /* best-effort */ }
+              try {
+                await provider.closeIssue(issue.iid);
+              } catch {
+                /* best-effort */
+              }
               break;
             case Action.REOPEN_ISSUE:
-              try { await provider.reopenIssue(issue.iid); } catch { /* best-effort */ }
+              try {
+                await provider.reopenIssue(issue.iid);
+              } catch {
+                /* best-effort */
+              }
               break;
           }
           if (aborted) break;
