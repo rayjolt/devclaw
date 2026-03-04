@@ -67,7 +67,7 @@ export async function runSetup(opts: SetupOpts): Promise<SetupResult> {
   const { agentId, workspacePath, agentCreated, bindingMigrated } =
     await resolveOrCreateAgent(opts, warnings);
 
-  await writePluginConfig(opts.runtime, agentId, opts.projectExecution);
+  await writePluginConfig(opts.runtime, agentId, opts.projectExecution, workspacePath);
 
   const defaultWorkspacePath = getDefaultWorkspacePath(opts.runtime);
   const filesWritten = await scaffoldWorkspace(workspacePath, defaultWorkspacePath);

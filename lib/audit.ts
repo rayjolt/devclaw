@@ -5,6 +5,7 @@
  */
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { DATA_DIR } from "./setup/migrate-layout.js";
 
 const MAX_LOG_LINES = 50;
@@ -15,6 +16,28 @@ export async function log(
   data: Record<string, unknown>,
 ): Promise<void> {
   const filePath = join(workspaceDir, DATA_DIR, "log", "audit.log");
+  await append(filePath, event, data);
+}
+
+/**
+ * Global audit log for runtime failures that happen *before* a workspace binding
+ * can be resolved.
+ *
+ * Intentionally NOT written into any OpenClaw workspace to avoid accidental drift.
+ */
+export async function logGlobal(
+  event: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const filePath = join(homedir(), ".openclaw", "devclaw-runtime", "audit.log");
+  await append(filePath, event, data);
+}
+
+async function append(
+  filePath: string,
+  event: string,
+  data: Record<string, unknown>,
+): Promise<void> {
   const entry = JSON.stringify({
     ts: new Date().toISOString(),
     event,
