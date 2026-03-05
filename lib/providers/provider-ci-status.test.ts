@@ -69,4 +69,27 @@ describe("GitHubProvider.getPrCiStatus", () => {
     assert.ok(ci.failedChecks.includes("quality"));
     assert.ok(calls >= 2);
   });
+
+  it("uses headRefOid from timeline PR metadata for CI lookup", async () => {
+    const p = new GitHubProvider({
+      repoPath: "/fake",
+      runCommand: rcFor({ checkRuns: { check_runs: [{ name: "quality", status: "completed", conclusion: "failure" }] } }),
+    });
+    (p as any).findPrsViaTimeline = async () => [{
+      number: 1,
+      title: "t",
+      body: "b",
+      headRefName: "feature/90-ci-gate-diagnostics",
+      headRefOid: "abc",
+      url: "u",
+      mergedAt: null,
+      reviewDecision: null,
+      state: "OPEN",
+      mergeable: "MERGEABLE",
+    }];
+
+    const ci = await p.getPrCiStatus(1);
+    assert.strictEqual(ci.state, CiState.FAIL);
+    assert.ok(ci.failedChecks.includes("quality"));
+  });
 });
