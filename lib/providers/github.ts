@@ -86,7 +86,7 @@ export class GitHubProvider implements IssueProvider {
   private async findPrsViaTimeline(
     issueId: number,
     state: "open" | "merged" | "all",
-  ): Promise<Array<{ number: number; title: string; body: string; headRefName: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> | null> {
+  ): Promise<Array<{ number: number; title: string; body: string; headRefName: string; headRefOid: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> | null> {
     const repo = await this.getRepoInfo();
     if (!repo) return null;
 
@@ -98,10 +98,10 @@ export class GitHubProvider implements IssueProvider {
               nodes {
                 __typename
                 ... on ConnectedEvent {
-                  subject { ... on PullRequest { number title body headRefName state url mergedAt reviewDecision mergeable } }
+                  subject { ... on PullRequest { number title body headRefName headRefOid state url mergedAt reviewDecision mergeable } }
                 }
                 ... on CrossReferencedEvent {
-                  source { ... on PullRequest { number title body headRefName state url mergedAt reviewDecision mergeable } }
+                  source { ... on PullRequest { number title body headRefName headRefOid state url mergedAt reviewDecision mergeable } }
                 }
               }
             }
@@ -115,7 +115,7 @@ export class GitHubProvider implements IssueProvider {
 
       // Extract PR data from both event types
       const seen = new Set<number>();
-      const prs: Array<{ number: number; title: string; body: string; headRefName: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> = [];
+      const prs: Array<{ number: number; title: string; body: string; headRefName: string; headRefOid: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> = [];
 
       for (const node of nodes) {
         const pr = node.subject ?? node.source;
@@ -127,6 +127,7 @@ export class GitHubProvider implements IssueProvider {
           title: pr.title ?? "",
           body: pr.body ?? "",
           headRefName: pr.headRefName ?? "",
+          headRefOid: pr.headRefOid ?? "",
           url: pr.url,
           mergedAt: pr.mergedAt ?? null,
           reviewDecision: pr.reviewDecision ?? null,
@@ -150,7 +151,7 @@ export class GitHubProvider implements IssueProvider {
    * Fallback: regex matching on branch name / title / body.
    *
    * TYPE CASTING NOTE: The timeline query returns a fixed set of fields
-   * (number, title, body, headRefName, state, url, mergedAt, reviewDecision, mergeable).
+   * (number, title, body, headRefName, headRefOid, state, url, mergedAt, reviewDecision, mergeable).
    * When callers request additional fields via the `fields` parameter (e.g., "mergeable"),
    * we cast the timeline results to T assuming they match. This works because:
    * 1. For common fields (mergeable, reviewDecision), the timeline API provides them.
@@ -166,7 +167,7 @@ export class GitHubProvider implements IssueProvider {
     const timelinePrs = await this.findPrsViaTimeline(issueId, state);
     if (timelinePrs && timelinePrs.length > 0) {
       // Map timeline results to the expected shape (T includes the requested fields)
-      // The timeline query now provides: number, title, body, headRefName, state, url, mergedAt, reviewDecision, mergeable
+      // The timeline query now provides: number, title, body, headRefName, headRefOid, state, url, mergedAt, reviewDecision, mergeable
       return timelinePrs as unknown as T[];
     }
 
@@ -408,9 +409,26 @@ export class GitHubProvider implements IssueProvider {
     }
 
     const pr = open[0];
-    const sha = pr.headRefOid;
+    const maxShaAttempts = 3;
+    let sha = pr.headRefOid;
+    let sawTransientMissingSha = false;
+
+    for (let attempt = 1; !sha && attempt <= maxShaAttempts; attempt++) {
+      sawTransientMissingSha = true;
+      if (attempt > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120 * (2 ** (attempt - 2))));
+      }
+      const refreshed = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
+      sha = refreshed[0]?.headRefOid ?? "";
+    }
+
     if (!sha) {
+      console.warn(`[github] CI status: persistent missing PR head SHA for issue #${issueId} after ${maxShaAttempts} retries`);
       return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
+    }
+
+    if (sawTransientMissingSha) {
+      console.info(`[github] CI status: recovered transient missing PR head SHA for issue #${issueId}`);
     }
 
     const failedChecks: string[] = [];
