@@ -51,4 +51,24 @@ describe("GitHubProvider.getPrCiStatus", () => {
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.UNKNOWN);
   });
+
+  it("retries transient missing headRefOid and reports concrete failing checks", async () => {
+    const p = new GitHubProvider({
+      repoPath: "/fake",
+      runCommand: rcFor({
+        checkRuns: { check_runs: [{ name: "quality", status: "completed", conclusion: "failure" }] },
+      }),
+    });
+    let prCalls = 0;
+    (p as any).findPrsForIssue = async () => {
+      prCalls++;
+      if (prCalls === 1) return [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "" }];
+      return [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
+    };
+
+    const ci = await p.getPrCiStatus(1);
+    assert.strictEqual(ci.state, CiState.FAIL);
+    assert.ok(ci.failedChecks.includes("quality"));
+    assert.ok(prCalls >= 2);
+  });
 });

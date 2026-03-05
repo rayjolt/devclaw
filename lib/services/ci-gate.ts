@@ -11,11 +11,13 @@ export async function getCiStatusWithRetry(
   attempts = 3,
 ): Promise<CiGateResult> {
   let last: CiStatus = { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "CI status unavailable" };
+  const knownFailedChecks = new Set<string>();
 
   for (let i = 0; i < attempts; i++) {
     try {
       const status = await provider.getPrCiStatus(issueId);
       last = status;
+      for (const check of status.failedChecks ?? []) knownFailedChecks.add(check);
       if (status.state !== CiState.UNKNOWN) {
         return { status, attempts: i + 1 };
       }
@@ -23,6 +25,17 @@ export async function getCiStatusWithRetry(
       if (i < attempts - 1) {
         await new Promise((resolve) => setTimeout(resolve, 200 * (2 ** i)));
         continue;
+      }
+      if (knownFailedChecks.size > 0) {
+        return {
+          status: {
+            state: CiState.FAIL,
+            failedChecks: [...knownFailedChecks],
+            pendingChecks: [],
+            summary: status.summary,
+          },
+          attempts: i + 1,
+        };
       }
       return { status, attempts: i + 1 };
     } catch (err) {
@@ -42,7 +55,7 @@ export async function getCiStatusWithRetry(
 }
 
 export function ciDiagnostics(status: CiStatus): string {
-  if (status.state === CiState.FAIL) {
+  if (status.state === CiState.FAIL || (status.failedChecks?.length ?? 0) > 0) {
     const checks = status.failedChecks.length > 0 ? status.failedChecks.join(", ") : "unknown check(s)";
     return `CI failed: ${checks}`;
   }
