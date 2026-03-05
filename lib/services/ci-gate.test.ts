@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { getCiStatusWithRetry } from "./ci-gate.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import { CiState } from "../providers/provider.js";
 
 describe("getCiStatusWithRetry", () => {
@@ -32,5 +32,22 @@ describe("getCiStatusWithRetry", () => {
     const result = await getCiStatusWithRetry(provider as any, 1, 3);
     assert.strictEqual(calls, 3);
     assert.strictEqual(result.status.state, CiState.PASS);
+  });
+
+  it("prefers concrete failure diagnostics over transient SHA-unavailable unknown", async () => {
+    let calls = 0;
+    const provider = {
+      async getPrCiStatus() {
+        calls++;
+        if (calls === 1) {
+          return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
+        }
+        return { state: CiState.FAIL, failedChecks: ["quality"], pendingChecks: [] };
+      },
+    };
+
+    const result = await getCiStatusWithRetry(provider as any, 90, 3);
+    assert.strictEqual(result.status.state, CiState.FAIL);
+    assert.strictEqual(ciDiagnostics(result.status), "CI failed: quality");
   });
 });

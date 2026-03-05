@@ -408,9 +408,26 @@ export class GitHubProvider implements IssueProvider {
     }
 
     const pr = open[0];
-    const sha = pr.headRefOid;
+    const maxShaAttempts = 3;
+    let sha = pr.headRefOid;
+    let sawTransientMissingSha = false;
+
+    for (let attempt = 1; !sha && attempt <= maxShaAttempts; attempt++) {
+      sawTransientMissingSha = true;
+      if (attempt > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120 * (2 ** (attempt - 2))));
+      }
+      const refreshed = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
+      sha = refreshed[0]?.headRefOid ?? "";
+    }
+
     if (!sha) {
+      console.warn(`[github] CI status: persistent missing PR head SHA for issue #${issueId} after ${maxShaAttempts} retries`);
       return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
+    }
+
+    if (sawTransientMissingSha) {
+      console.info(`[github] CI status: recovered transient missing PR head SHA for issue #${issueId}`);
     }
 
     const failedChecks: string[] = [];

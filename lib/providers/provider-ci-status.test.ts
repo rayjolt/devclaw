@@ -51,4 +51,22 @@ describe("GitHubProvider.getPrCiStatus", () => {
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.UNKNOWN);
   });
+
+  it("retries transient missing PR head SHA and reports failing checks", async () => {
+    const p = new GitHubProvider({
+      repoPath: "/fake",
+      runCommand: rcFor({ checkRuns: { check_runs: [{ name: "quality", status: "completed", conclusion: "failure" }] } }),
+    });
+    let calls = 0;
+    (p as any).findPrsForIssue = async () => {
+      calls++;
+      if (calls === 1) return [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "" }];
+      return [{ title: "t", body: "b", number: 1, url: "u", headRefOid: "abc" }];
+    };
+
+    const ci = await p.getPrCiStatus(1);
+    assert.strictEqual(ci.state, CiState.FAIL);
+    assert.ok(ci.failedChecks.includes("quality"));
+    assert.ok(calls >= 2);
+  });
 });
