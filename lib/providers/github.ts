@@ -402,14 +402,33 @@ export class GitHubProvider implements IssueProvider {
 
   async getPrCiStatus(issueId: number): Promise<CiStatus> {
     type OpenPr = { title: string; body: string; number: number; url: string; headRefOid: string };
-    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
-    if (open.length === 0) {
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No open PR found for CI status" };
+
+    const maxShaAttempts = 3;
+    let pr: OpenPr | undefined;
+    let sha: string | undefined;
+
+    for (let i = 0; i < maxShaAttempts; i++) {
+      const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
+      if (open.length === 0) {
+        return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No open PR found for CI status" };
+      }
+
+      pr = open[0];
+      sha = pr.headRefOid;
+      if (sha) {
+        if (i > 0) {
+          console.info(`[ci] Recovered transient missing PR head SHA for issue #${issueId} after ${i + 1} attempt(s)`);
+        }
+        break;
+      }
+
+      if (i < maxShaAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (2 ** i)));
+      }
     }
 
-    const pr = open[0];
-    const sha = pr.headRefOid;
-    if (!sha) {
+    if (!sha || !pr) {
+      console.warn(`[ci] Persistent missing PR head SHA for issue #${issueId} after ${maxShaAttempts} attempt(s)`);
       return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
     }
 

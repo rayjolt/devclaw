@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { getCiStatusWithRetry } from "./ci-gate.js";
+import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import { CiState } from "../providers/provider.js";
 
 describe("getCiStatusWithRetry", () => {
@@ -32,5 +32,33 @@ describe("getCiStatusWithRetry", () => {
     const result = await getCiStatusWithRetry(provider as any, 1, 3);
     assert.strictEqual(calls, 3);
     assert.strictEqual(result.status.state, CiState.PASS);
+  });
+
+  it("prefers known failing checks over UNKNOWN fallback diagnostics", async () => {
+    let calls = 0;
+    const provider = {
+      async getPrCiStatus() {
+        calls++;
+        if (calls === 1) {
+          return {
+            state: CiState.UNKNOWN,
+            failedChecks: ["quality"],
+            pendingChecks: [],
+            summary: "PR head SHA unavailable",
+          };
+        }
+        return {
+          state: CiState.UNKNOWN,
+          failedChecks: [],
+          pendingChecks: [],
+          summary: "PR head SHA unavailable",
+        };
+      },
+    };
+
+    const result = await getCiStatusWithRetry(provider as any, 1, 2);
+    assert.strictEqual(result.status.state, CiState.FAIL);
+    assert.ok(result.status.failedChecks.includes("quality"));
+    assert.strictEqual(ciDiagnostics(result.status), "CI failed: quality");
   });
 });
