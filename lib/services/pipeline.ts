@@ -22,6 +22,7 @@ import { loadConfig } from "../config/index.js";
 import { detectStepRouting } from "./queue-scan.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import { guardTerminalCompletion } from "./terminal-guard.js";
+import { postTerminalBlockedCommentOnce } from "./heartbeat/terminal-blocked-comment.js";
 import {
   Action,
   DEFAULT_WORKFLOW,
@@ -134,27 +135,12 @@ export async function executeCompletion(opts: {
 
     // Best-effort: leave breadcrumbs for humans.
     try {
-      if (terminalGuard.reason === "merge_conflict") {
-        await provider.addComment(
-          issueId,
-          `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${guardPrUrl ?? "no PR url"}).`,
-        );
-      } else if (terminalGuard.reason === "pr_not_merged_auto_merge_off") {
-        await provider.addComment(
-          issueId,
-          `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${guardPrUrl ?? "no PR url"}). Merge the PR, then DevClaw will close this issue.`,
-        );
-      } else if (terminalGuard.reason === "pr_closed_unmerged") {
-        await provider.addComment(
-          issueId,
-          `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${guardPrUrl ?? "no PR url"}).`,
-        );
-      } else {
-        await provider.addComment(
-          issueId,
-          "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.",
-        );
-      }
+      await postTerminalBlockedCommentOnce({
+        provider,
+        issueId,
+        reason: terminalGuard.reason,
+        prUrl: guardPrUrl,
+      });
     } catch {
       /* best-effort */
     }
@@ -294,7 +280,6 @@ export async function executeCompletion(opts: {
   let nextState = getNextStateDescription(workflow, role, result);
   const notifyConfig = getNotificationConfig(pluginConfig);
 
-
   if (terminalBlocked && terminalGuardReason) {
     nextState = `blocked: ${terminalGuardReason}`;
   }
@@ -311,7 +296,9 @@ export async function executeCompletion(opts: {
     // best-effort
   }
 
-  const effectiveTo = (terminalGuardOverrideToLabel ?? ciOverrideToLabel ?? (rule.to as StateLabel)) as StateLabel;
+  const effectiveTo = (terminalGuardOverrideToLabel ??
+    ciOverrideToLabel ??
+    (rule.to as StateLabel)) as StateLabel;
   const transitioned = effectiveTo !== rule.from;
 
   let updatedIssue = issueBefore;
@@ -333,7 +320,8 @@ export async function executeCompletion(opts: {
 
   // Post-actions are allowed only when we actually transition to the rule's
   // intended state (rule.to) AND the terminal guard did not block.
-  const runPostActions = !terminalBlocked && transitioned && effectiveTo === rule.to;
+  const runPostActions =
+    !terminalBlocked && transitioned && effectiveTo === rule.to;
   if (runPostActions) {
     for (const action of rule.actions) {
       switch (action) {
@@ -466,12 +454,11 @@ export async function executeCompletion(opts: {
       announcement += `\n  - [#${t.id}: ${t.title}](${t.url})`;
     }
   }
-  const effectiveNextState =
-    terminalGuardReason
-      ? `Terminal guard blocked completion (${terminalGuardReason})`
-      : (ciOverrideToLabel && ciOverrideToLabel !== rule.to
-        ? `CI gate applied (${rule.from} → ${ciOverrideToLabel})`
-        : nextState);
+  const effectiveNextState = terminalGuardReason
+    ? `Terminal guard blocked completion (${terminalGuardReason})`
+    : ciOverrideToLabel && ciOverrideToLabel !== rule.to
+      ? `CI gate applied (${rule.from} → ${ciOverrideToLabel})`
+      : nextState;
 
   announcement += `\n${effectiveNextState}.`;
 
