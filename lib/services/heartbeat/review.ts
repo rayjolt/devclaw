@@ -19,7 +19,7 @@ import type { RunCommand } from "../../context.js";
 import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
-import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
+import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
 
 /**
  * Scan review-type states and transition issues whose PR check condition is met.

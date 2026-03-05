@@ -18,7 +18,7 @@ import {
 import { detectStepRouting } from "../queue-scan.js";
 import { log as auditLog } from "../../audit.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
-import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
+import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
 
 /**
  * Scan test queue states and auto-transition issues with test:skip.

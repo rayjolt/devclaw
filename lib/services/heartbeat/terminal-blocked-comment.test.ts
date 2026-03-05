@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
+import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
 
 describe("postTerminalBlockedCommentOnce", () => {
   it("dedupes when signature marker exists outside the first page of comments", async () => {
