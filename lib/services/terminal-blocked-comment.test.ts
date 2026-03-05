@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
+import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
 
 describe("postTerminalBlockedCommentOnce", () => {
-  it("dedupes when signature marker exists outside the first page of comments", async () => {
+  it("dedupes when signature marker already exists in comments", async () => {
     const marker =
       "<!-- devclaw:terminal-completion-blocked:30|merge_conflict|https://example/pr/30 -->";
     const comments = Array.from({ length: 120 }, (_, i) => ({
@@ -31,10 +31,6 @@ describe("postTerminalBlockedCommentOnce", () => {
     });
 
     assert.equal(posted, false);
-    assert.equal(
-      addCommentCalls,
-      0,
-      "should not post duplicate marker comment",
-    );
+    assert.equal(addCommentCalls, 0);
   });
 });
