@@ -276,9 +276,14 @@ export class GitHubProvider implements IssueProvider {
 
   async listComments(issueId: number): Promise<IssueComment[]> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${issueId}/comments`, "--jq", ".[] | {id: .id, author: .user.login, body: .body, created_at: .created_at}"]);
+      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${issueId}/comments`, "--paginate", "--jq", ".[] | {id: .id, author: .user.login, body: .body, created_at: .created_at}"]);
       if (!raw) return [];
-      return raw.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      const comments = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as IssueComment);
+      comments.sort((a, b) => {
+        const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return timeDiff !== 0 ? timeDiff : a.id - b.id;
+      });
+      return comments;
     } catch { return []; }
   }
 

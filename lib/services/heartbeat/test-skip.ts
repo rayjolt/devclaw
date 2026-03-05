@@ -18,6 +18,7 @@ import {
 import { detectStepRouting } from "../queue-scan.js";
 import { log as auditLog } from "../../audit.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
+import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
 
 /**
  * Scan test queue states and auto-transition issues with test:skip.
@@ -33,15 +34,20 @@ export async function testSkipPass(opts: {
   let transitions = 0;
 
   // Find test queue states (role=tester, type=queue) that have a SKIP event
-  const testQueueStates = Object.entries(workflow.states)
-    .filter(([, s]) => s.role === "tester" && s.type === StateType.QUEUE) as [string, StateConfig][];
+  const testQueueStates = Object.entries(workflow.states).filter(
+    ([, s]) => s.role === "tester" && s.type === StateType.QUEUE,
+  ) as [string, StateConfig][];
 
   for (const [_stateKey, state] of testQueueStates) {
     const skipTransition = state.on?.[WorkflowEvent.SKIP];
     if (!skipTransition) continue;
 
-    const targetKey = typeof skipTransition === "string" ? skipTransition : skipTransition.target;
-    const actions = typeof skipTransition === "object" ? skipTransition.actions : undefined;
+    const targetKey =
+      typeof skipTransition === "string"
+        ? skipTransition
+        : skipTransition.target;
+    const actions =
+      typeof skipTransition === "object" ? skipTransition.actions : undefined;
     const targetState = workflow.states[targetKey];
     if (!targetState) continue;
 
@@ -64,18 +70,17 @@ export async function testSkipPass(opts: {
         const pr = guard.prStatus;
         const prUrl = pr?.url ?? null;
 
-        // Best-effort: leave a clear breadcrumb.
+        // Best-effort: leave a clear breadcrumb (deduped by issueId/reason/prUrl).
         try {
-          if (guard.reason === "merge_conflict") {
-            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR has merge conflicts (${prUrl ?? "no PR url"}).`);
-          } else if (guard.reason === "pr_not_merged_auto_merge_off") {
-            await provider.addComment(issue.iid, `⏸️ DevClaw blocked terminal completion: auto-merge is off and PR is not merged yet (${prUrl ?? "no PR url"}). Merge the PR, then the heartbeat will close this issue.`);
-          } else if (guard.reason === "pr_closed_unmerged") {
-            await provider.addComment(issue.iid, `⚠️ DevClaw blocked terminal completion: PR was closed without merging (${prUrl ?? "no PR url"}).`);
-          } else {
-            await provider.addComment(issue.iid, "⚠️ DevClaw blocked terminal completion: unable to verify PR mergeability/merge state.");
-          }
-        } catch { /* best-effort */ }
+          await postTerminalBlockedCommentOnce({
+            provider,
+            issueId: issue.iid,
+            reason: guard.reason,
+            prUrl,
+          });
+        } catch {
+          /* best-effort */
+        }
 
         await auditLog(workspaceDir, "terminal_completion_blocked", {
           project: projectName,
@@ -109,10 +114,18 @@ export async function testSkipPass(opts: {
         for (const action of actions) {
           switch (action) {
             case Action.CLOSE_ISSUE:
-              try { await provider.closeIssue(issue.iid); } catch { /* best-effort */ }
+              try {
+                await provider.closeIssue(issue.iid);
+              } catch {
+                /* best-effort */
+              }
               break;
             case Action.REOPEN_ISSUE:
-              try { await provider.reopenIssue(issue.iid); } catch { /* best-effort */ }
+              try {
+                await provider.reopenIssue(issue.iid);
+              } catch {
+                /* best-effort */
+              }
               break;
           }
         }

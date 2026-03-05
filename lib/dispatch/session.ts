@@ -88,7 +88,6 @@ export function sendToAgent(
 ): void {
   const rc = opts.runCommand;
   const gatewayParams = JSON.stringify({
-    idempotencyKey: `devclaw-${opts.projectName}-${opts.issueId}-${opts.role}-${opts.level ?? "unknown"}-${opts.slotIndex ?? 0}-${sessionKey}`,
     agentId: opts.agentId ?? "devclaw",
     sessionKey,
     message: taskMessage,
