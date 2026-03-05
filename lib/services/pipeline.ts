@@ -22,7 +22,7 @@ import { loadConfig } from "../config/index.js";
 import { detectStepRouting } from "./queue-scan.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import { guardTerminalCompletion } from "./terminal-guard.js";
-import { postTerminalBlockedCommentOnce } from "./heartbeat/terminal-blocked-comment.js";
+import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
 import {
   Action,
   DEFAULT_WORKFLOW,
