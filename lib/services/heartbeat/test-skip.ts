@@ -19,6 +19,7 @@ import { detectStepRouting } from "../queue-scan.js";
 import { log as auditLog } from "../../audit.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
 import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
+import { resetNoChecksCounter } from "./ci-no-checks-circuit-breaker.js";
 
 /**
  * Scan test queue states and auto-transition issues with test:skip.
@@ -116,6 +117,11 @@ export async function testSkipPass(opts: {
             case Action.CLOSE_ISSUE:
               try {
                 await provider.closeIssue(issue.iid);
+                await resetNoChecksCounter({
+                  workspaceDir,
+                  projectName,
+                  issueId: issue.iid,
+                });
               } catch {
                 /* best-effort */
               }
