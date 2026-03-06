@@ -35,6 +35,11 @@ const WorkflowConfigSchema = z.object({
   reviewPolicy: z.enum(["human", "agent", "skip"]).optional(),
   testPolicy: z.enum(["skip", "agent"]).optional(),
   ciGating: z.boolean().optional(),
+  ciNoChecksCircuitBreaker: z
+    .object({
+      attempts: z.number().int().positive().optional(),
+    })
+    .optional(),
   roleExecution: z.enum(["parallel", "sequential"]).optional(),
   maxWorkersPerLevel: z.number().int().positive().optional(),
   states: z.record(z.string(), StateConfigSchema),
@@ -60,18 +65,22 @@ const RoleOverrideSchema = z.union([
   }),
 ]);
 
-const TimeoutConfigSchema = z.object({
-  gitPullMs: z.number().positive().optional(),
-  gatewayMs: z.number().positive().optional(),
-  sessionPatchMs: z.number().positive().optional(),
-  dispatchMs: z.number().positive().optional(),
-  staleWorkerHours: z.number().positive().optional(),
-  sessionContextBudget: z.number().min(0).max(1).optional(),
-}).optional();
+const TimeoutConfigSchema = z
+  .object({
+    gitPullMs: z.number().positive().optional(),
+    gatewayMs: z.number().positive().optional(),
+    sessionPatchMs: z.number().positive().optional(),
+    dispatchMs: z.number().positive().optional(),
+    staleWorkerHours: z.number().positive().optional(),
+    sessionContextBudget: z.number().min(0).max(1).optional(),
+  })
+  .optional();
 
-const InstanceConfigSchema = z.object({
-  name: z.string().optional(),
-}).optional();
+const InstanceConfigSchema = z
+  .object({
+    name: z.string().optional(),
+  })
+  .optional();
 
 export const DevClawConfigSchema = z.object({
   roles: z.record(z.string(), RoleOverrideSchema).optional(),
@@ -95,9 +104,13 @@ export function validateConfig(raw: unknown): void {
  * - Queue states have a role assigned
  * - Terminal states have no outgoing transitions
  */
-export function validateWorkflowIntegrity(
-  workflow: { initial: string; states: Record<string, { type: string; role?: string; on?: Record<string, unknown> }> },
-): string[] {
+export function validateWorkflowIntegrity(workflow: {
+  initial: string;
+  states: Record<
+    string,
+    { type: string; role?: string; on?: Record<string, unknown> }
+  >;
+}): string[] {
   const errors: string[] = [];
   const stateKeys = new Set(Object.keys(workflow.states));
 
@@ -114,17 +127,26 @@ export function validateWorkflowIntegrity(
       errors.push(`Active state "${key}" must have a role assigned`);
     }
 
-    if (state.type === StateType.TERMINAL && state.on && Object.keys(state.on).length > 0) {
-      errors.push(`Terminal state "${key}" should not have outgoing transitions`);
+    if (
+      state.type === StateType.TERMINAL &&
+      state.on &&
+      Object.keys(state.on).length > 0
+    ) {
+      errors.push(
+        `Terminal state "${key}" should not have outgoing transitions`,
+      );
     }
 
     if (state.on) {
       for (const [event, transition] of Object.entries(state.on)) {
-        const target = typeof transition === "string"
-          ? transition
-          : (transition as { target: string }).target;
+        const target =
+          typeof transition === "string"
+            ? transition
+            : (transition as { target: string }).target;
         if (!stateKeys.has(target)) {
-          errors.push(`State "${key}" transition "${event}" targets non-existent state "${target}"`);
+          errors.push(
+            `State "${key}" transition "${event}" targets non-existent state "${target}"`,
+          );
         }
       }
     }

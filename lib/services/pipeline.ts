@@ -23,6 +23,7 @@ import { detectStepRouting } from "./queue-scan.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "./ci-gate.js";
 import { guardTerminalCompletion } from "./terminal-guard.js";
 import { postTerminalBlockedCommentOnce } from "./terminal-blocked-comment.js";
+import { resetNoChecksCounter } from "./heartbeat/ci-no-checks-circuit-breaker.js";
 import {
   Action,
   DEFAULT_WORKFLOW,
@@ -327,6 +328,11 @@ export async function executeCompletion(opts: {
       switch (action) {
         case Action.CLOSE_ISSUE:
           await provider.closeIssue(issueId);
+          await resetNoChecksCounter({
+            workspaceDir,
+            projectName,
+            issueId,
+          });
           break;
         case Action.REOPEN_ISSUE:
           await provider.reopenIssue(issueId);

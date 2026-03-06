@@ -46,11 +46,19 @@ export function mergeConfig(
   if (base.workflow || overlay.workflow) {
     merged.workflow = {
       initial: overlay.workflow?.initial ?? base.workflow?.initial,
-      reviewPolicy: overlay.workflow?.reviewPolicy ?? base.workflow?.reviewPolicy,
+      reviewPolicy:
+        overlay.workflow?.reviewPolicy ?? base.workflow?.reviewPolicy,
       testPolicy: overlay.workflow?.testPolicy ?? base.workflow?.testPolicy,
       ciGating: overlay.workflow?.ciGating ?? base.workflow?.ciGating,
-      roleExecution: overlay.workflow?.roleExecution ?? base.workflow?.roleExecution,
-      maxWorkersPerLevel: overlay.workflow?.maxWorkersPerLevel ?? base.workflow?.maxWorkersPerLevel,
+      ciNoChecksCircuitBreaker: {
+        ...base.workflow?.ciNoChecksCircuitBreaker,
+        ...overlay.workflow?.ciNoChecksCircuitBreaker,
+      },
+      roleExecution:
+        overlay.workflow?.roleExecution ?? base.workflow?.roleExecution,
+      maxWorkersPerLevel:
+        overlay.workflow?.maxWorkersPerLevel ??
+        base.workflow?.maxWorkersPerLevel,
       states: {
         ...base.workflow?.states,
         ...overlay.workflow?.states,
@@ -78,15 +86,19 @@ function mergeRoleOverride(
     ...base,
     ...overlay,
     // Models: merge (don't replace)
-    models: base.models || overlay.models
-      ? { ...base.models, ...overlay.models }
-      : undefined,
+    models:
+      base.models || overlay.models
+        ? { ...base.models, ...overlay.models }
+        : undefined,
     // Emoji: merge (don't replace)
-    emoji: base.emoji || overlay.emoji
-      ? { ...base.emoji, ...overlay.emoji }
-      : undefined,
+    emoji:
+      base.emoji || overlay.emoji
+        ? { ...base.emoji, ...overlay.emoji }
+        : undefined,
     // Arrays replace entirely
     ...(overlay.levels ? { levels: overlay.levels } : {}),
-    ...(overlay.completionResults ? { completionResults: overlay.completionResults } : {}),
+    ...(overlay.completionResults
+      ? { completionResults: overlay.completionResults }
+      : {}),
   };
 }

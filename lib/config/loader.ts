@@ -14,7 +14,14 @@ import YAML from "yaml";
 import { ROLE_REGISTRY } from "../roles/registry.js";
 import { DEFAULT_WORKFLOW, type WorkflowConfig } from "../workflow/index.js";
 import { mergeConfig } from "./merge.js";
-import type { DevClawConfig, ResolvedConfig, ResolvedRoleConfig, ResolvedTimeouts, RoleOverride, ModelEntry } from "./types.js";
+import type {
+  DevClawConfig,
+  ResolvedConfig,
+  ResolvedRoleConfig,
+  ResolvedTimeouts,
+  RoleOverride,
+  ModelEntry,
+} from "./types.js";
 import { validateConfig, validateWorkflowIntegrity } from "./schema.js";
 import { DATA_DIR } from "../setup/migrate-layout.js";
 
@@ -36,8 +43,8 @@ export async function loadConfig(
   // Layer 2: workspace workflow.yaml (in devclaw/ data dir)
   let merged = builtIn;
   const workspaceConfig =
-    await readWorkflowFile(dataDir) ??
-    await readLegacyConfigFile(path.join(workspaceDir, "projects"));
+    (await readWorkflowFile(dataDir)) ??
+    (await readLegacyConfigFile(path.join(workspaceDir, "projects")));
   if (workspaceConfig) {
     merged = mergeConfig(merged, workspaceConfig);
   }
@@ -54,8 +61,8 @@ export async function loadConfig(
   if (projectName) {
     const projectDir = path.join(projectsDir, projectName);
     const projectConfig =
-      await readWorkflowFile(projectDir) ??
-      await readLegacyConfigFile(projectDir);
+      (await readWorkflowFile(projectDir)) ??
+      (await readLegacyConfigFile(projectDir));
     if (projectConfig) {
       merged = mergeConfig(merged, projectConfig);
     }
@@ -95,7 +102,9 @@ function buildDefaultConfig(): DevClawConfig {
 const DEFAULT_MAX_WORKERS_PER_LEVEL = 2;
 
 /** Flatten a ModelEntry map to string-only model IDs. */
-function flattenModels(entries: Record<string, ModelEntry>): Record<string, string> {
+function flattenModels(
+  entries: Record<string, ModelEntry>,
+): Record<string, string> {
   const flat: Record<string, string> = {};
   for (const [level, entry] of Object.entries(entries)) {
     flat[level] = typeof entry === "string" ? entry : entry.model;
@@ -121,7 +130,8 @@ function resolveLevelMaxWorkers(
 
 function resolve(config: DevClawConfig): ResolvedConfig {
   const roles: Record<string, ResolvedRoleConfig> = {};
-  const globalMaxWorkers = config.workflow?.maxWorkersPerLevel ?? DEFAULT_MAX_WORKERS_PER_LEVEL;
+  const globalMaxWorkers =
+    config.workflow?.maxWorkersPerLevel ?? DEFAULT_MAX_WORKERS_PER_LEVEL;
 
   if (config.roles) {
     for (const [id, override] of Object.entries(config.roles)) {
@@ -152,7 +162,8 @@ function resolve(config: DevClawConfig): ResolvedConfig {
         defaultLevel: override.defaultLevel ?? reg?.defaultLevel ?? "",
         models: flattenModels(mergedModels),
         emoji: { ...(reg?.emoji ?? {}), ...(override.emoji ?? {}) },
-        completionResults: override.completionResults ?? (reg ? [...reg.completionResults] : []),
+        completionResults:
+          override.completionResults ?? (reg ? [...reg.completionResults] : []),
         enabled: true,
       };
     }
@@ -176,17 +187,25 @@ function resolve(config: DevClawConfig): ResolvedConfig {
 
   const workflow: WorkflowConfig = {
     initial: config.workflow?.initial ?? DEFAULT_WORKFLOW.initial,
-    reviewPolicy: config.workflow?.reviewPolicy ?? DEFAULT_WORKFLOW.reviewPolicy,
+    reviewPolicy:
+      config.workflow?.reviewPolicy ?? DEFAULT_WORKFLOW.reviewPolicy,
     testPolicy: config.workflow?.testPolicy ?? DEFAULT_WORKFLOW.testPolicy,
     ciGating: config.workflow?.ciGating ?? DEFAULT_WORKFLOW.ciGating,
-    roleExecution: config.workflow?.roleExecution ?? DEFAULT_WORKFLOW.roleExecution,
+    ciNoChecksCircuitBreaker: {
+      ...DEFAULT_WORKFLOW.ciNoChecksCircuitBreaker,
+      ...config.workflow?.ciNoChecksCircuitBreaker,
+    },
+    roleExecution:
+      config.workflow?.roleExecution ?? DEFAULT_WORKFLOW.roleExecution,
     states: { ...DEFAULT_WORKFLOW.states, ...config.workflow?.states },
   };
 
   // Validate structural integrity (cross-references between states)
   const integrityErrors = validateWorkflowIntegrity(workflow);
   if (integrityErrors.length > 0) {
-    throw new Error(`Workflow config integrity errors:\n  - ${integrityErrors.join("\n  - ")}`);
+    throw new Error(
+      `Workflow config integrity errors:\n  - ${integrityErrors.join("\n  - ")}`,
+    );
   }
 
   const timeouts: ResolvedTimeouts = {
@@ -200,7 +219,9 @@ function resolve(config: DevClawConfig): ResolvedConfig {
   };
 
   return {
-    roles, workflow, timeouts,
+    roles,
+    workflow,
+    timeouts,
     instanceName: config.instance?.name,
   };
 }
@@ -227,22 +248,30 @@ async function readWorkflowFile(dir: string): Promise<DevClawConfig | null> {
 }
 
 /** Read config.yaml (old name, fallback for unmigrated workspaces). */
-async function readLegacyConfigFile(dir: string): Promise<DevClawConfig | null> {
+async function readLegacyConfigFile(
+  dir: string,
+): Promise<DevClawConfig | null> {
   try {
     const content = await fs.readFile(path.join(dir, "config.yaml"), "utf-8");
     return YAML.parse(content) as DevClawConfig;
-  } catch { /* not found */ }
+  } catch {
+    /* not found */
+  }
   return null;
 }
 
 /** Read legacy workflow.json (standalone workflow section only). */
-async function readLegacyWorkflowJson(dir: string): Promise<Partial<WorkflowConfig> | null> {
+async function readLegacyWorkflowJson(
+  dir: string,
+): Promise<Partial<WorkflowConfig> | null> {
   try {
     const content = await fs.readFile(path.join(dir, "workflow.json"), "utf-8");
     const parsed = JSON.parse(content) as
       | Partial<WorkflowConfig>
       | { workflow?: Partial<WorkflowConfig> };
     return (parsed as any).workflow ?? parsed;
-  } catch { /* not found */ }
+  } catch {
+    /* not found */
+  }
   return null;
 }

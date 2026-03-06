@@ -23,6 +23,14 @@ import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
 import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
+import {
+  getNoChecksBreakerAttempts,
+  incrementNoChecksCounter,
+  isNoChecksUnknown,
+  postNoChecksBreakerCommentOnce,
+  postNoChecksUnderThresholdCommentOnce,
+  resetNoChecksCounter,
+} from "./ci-no-checks-circuit-breaker.js";
 
 /**
  * Scan review queue states and auto-merge + transition issues with review:skip.
@@ -55,6 +63,9 @@ export async function reviewSkipPass(opts: {
     onMerge,
   } = opts;
   let transitions = 0;
+  const noChecksBreakerAttempts = getNoChecksBreakerAttempts(
+    workflow.ciNoChecksCircuitBreaker?.attempts,
+  );
 
   // Find review queue states (role=reviewer, type=queue) that have a SKIP event
   const reviewQueueStates = Object.entries(workflow.states).filter(
@@ -158,6 +169,11 @@ export async function reviewSkipPass(opts: {
                   3,
                 );
                 if (ci.state === CiState.PENDING) {
+                  await resetNoChecksCounter({
+                    workspaceDir,
+                    projectName,
+                    issueId: issue.iid,
+                  });
                   await auditLog(workspaceDir, "review_skip_ci_pending", {
                     project: projectName,
                     issueId: issue.iid,
@@ -178,6 +194,99 @@ export async function reviewSkipPass(opts: {
                         : failedTransition.target;
                     const failedState = workflow.states[failedKey];
                     if (failedState) {
+                      if (ci.state === CiState.FAIL) {
+                        await resetNoChecksCounter({
+                          workspaceDir,
+                          projectName,
+                          issueId: issue.iid,
+                        });
+                      }
+
+                      const noChecksUnknown =
+                        ci.state === CiState.UNKNOWN &&
+                        isNoChecksUnknown(ci.summary);
+
+                      if (noChecksUnknown) {
+                        const noChecksCount = await incrementNoChecksCounter({
+                          workspaceDir,
+                          projectName,
+                          issueId: issue.iid,
+                        });
+                        const refiningLabel =
+                          workflow.states.refining?.label ??
+                          Object.values(workflow.states).find(
+                            (s) =>
+                              s.type === "hold" &&
+                              s.label.toLowerCase() === "refining",
+                          )?.label ??
+                          "Refining";
+
+                        if (noChecksCount >= noChecksBreakerAttempts) {
+                          await provider.transitionLabel(
+                            issue.iid,
+                            state.label,
+                            refiningLabel,
+                          );
+                          try {
+                            await postNoChecksBreakerCommentOnce({
+                              provider,
+                              issueId: issue.iid,
+                              attempts: noChecksBreakerAttempts,
+                            });
+                          } catch {
+                            /* best effort */
+                          }
+                          await auditLog(
+                            workspaceDir,
+                            "review_skip_transition",
+                            {
+                              project: projectName,
+                              issueId: issue.iid,
+                              from: state.label,
+                              to: refiningLabel,
+                              reason: "ci_no_checks_circuit_breaker",
+                              noChecksCount,
+                              noChecksThreshold: noChecksBreakerAttempts,
+                            },
+                          );
+                          transitions++;
+                          aborted = true;
+                          break;
+                        }
+
+                        await provider.transitionLabel(
+                          issue.iid,
+                          state.label,
+                          failedState.label,
+                        );
+                        try {
+                          await postNoChecksUnderThresholdCommentOnce({
+                            provider,
+                            issueId: issue.iid,
+                            threshold: noChecksBreakerAttempts,
+                          });
+                        } catch {
+                          /* best effort */
+                        }
+                        await auditLog(workspaceDir, "review_skip_transition", {
+                          project: projectName,
+                          issueId: issue.iid,
+                          from: state.label,
+                          to: failedState.label,
+                          reason: "ci_unknown_no_checks",
+                          noChecksCount,
+                          noChecksThreshold: noChecksBreakerAttempts,
+                        });
+                        transitions++;
+                        aborted = true;
+                        break;
+                      }
+
+                      await resetNoChecksCounter({
+                        workspaceDir,
+                        projectName,
+                        issueId: issue.iid,
+                      });
                       await provider.transitionLabel(
                         issue.iid,
                         state.label,
@@ -197,6 +306,12 @@ export async function reviewSkipPass(opts: {
                   aborted = true;
                   break;
                 }
+
+                await resetNoChecksCounter({
+                  workspaceDir,
+                  projectName,
+                  issueId: issue.iid,
+                });
               }
 
               try {
@@ -265,6 +380,12 @@ export async function reviewSkipPass(opts: {
       }
 
       if (aborted) continue;
+
+      await resetNoChecksCounter({
+        workspaceDir,
+        projectName,
+        issueId: issue.iid,
+      });
 
       // Transition label
       await provider.transitionLabel(issue.iid, state.label, targetState.label);

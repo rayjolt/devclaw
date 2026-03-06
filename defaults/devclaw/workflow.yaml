@@ -47,6 +47,8 @@ workflow:
   ciGating: false # Options: false (default), true
   # false — Backward-compatible behavior: CI status is not a completion gate.
   # true  — CI-aware gating: retry lookup 3x; pending stays in review; fail/unknown routes to To Improve.
+  ciNoChecksCircuitBreaker:
+    attempts: 10 # Consecutive "No CI checks reported for PR" outcomes before auto-pausing to Refining.
   roleExecution: parallel # Options: parallel (default), sequential
   # parallel   — Different roles can work simultaneously (e.g. developer + tester).
   # sequential — Only one role active at a time.
