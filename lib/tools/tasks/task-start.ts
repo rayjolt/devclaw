@@ -26,7 +26,15 @@ import {
 } from "../../workflow/index.js";
 import { getLevelsForRole } from "../../roles/index.js";
 import { loadConfig } from "../../config/index.js";
-import { requireWorkspaceDir, resolveChannelId, resolveProject, resolveProvider, autoAssignOwnerLabel, applyNotifyLabel } from "../helpers.js";
+import {
+  requireWorkspaceDir,
+  resolveChannelId,
+  resolveProject,
+  resolveProvider,
+  autoAssignOwnerLabel,
+  applyNotifyLabel,
+} from "../helpers.js";
+import { resetNoChecksCounter } from "../../services/heartbeat/ci-no-checks-circuit-breaker.js";
 
 export function createTaskStartTool(ctx: PluginContext) {
   return (toolCtx: ToolContext) => ({
@@ -45,7 +53,8 @@ Examples:
       properties: {
         channelId: {
           type: "string",
-          description: "YOUR chat/group ID — the numeric ID of the chat you are in right now (e.g. '-1003844794417'). Do NOT guess; use the ID of the conversation this message came from.",
+          description:
+            "YOUR chat/group ID — the numeric ID of the chat you are in right now (e.g. '-1003844794417'). Do NOT guess; use the ID of the conversation this message came from.",
         },
         issueId: {
           type: "number",
@@ -53,13 +62,17 @@ Examples:
         },
         level: {
           type: "string",
-          description: "Optional level hint for dispatch (e.g. 'junior', 'senior'). Applied as a label so the heartbeat respects it.",
+          description:
+            "Optional level hint for dispatch (e.g. 'junior', 'senior'). Applied as a label so the heartbeat respects it.",
         },
       },
     },
 
     async execute(_id: string, params: Record<string, unknown>) {
-      const channelId = resolveChannelId(toolCtx, params.channelId as string | undefined);
+      const channelId = resolveChannelId(
+        toolCtx,
+        params.channelId as string | undefined,
+      );
       const issueId = params.issueId as number;
       const levelHint = params.level as string | undefined;
       const workspaceDir = requireWorkspaceDir(toolCtx);
@@ -82,7 +95,9 @@ Examples:
 
       // Determine target based on current state type
       const { targetLabel, targetState, transitioned } = resolveTarget(
-        workflow, currentLabel, currentState,
+        workflow,
+        currentLabel,
+        currentState,
       );
 
       // Transition label if needed
@@ -90,15 +105,26 @@ Examples:
         await provider.transitionLabel(issueId, currentLabel, targetLabel);
       }
 
+      // Human/manual re-queue counts as explicit intervention reset for CI no-checks breaker.
+      await resetNoChecksCounter({
+        workspaceDir,
+        projectName: project.name,
+        issueId,
+      });
+
       // Apply level hint label if provided
       const targetRole = targetState.role;
       if (levelHint && targetRole) {
         const validLevels = getLevelsForRole(targetRole);
         if (!validLevels.includes(levelHint)) {
-          throw new Error(`Invalid level "${levelHint}" for role "${targetRole}". Valid: ${validLevels.join(", ")}`);
+          throw new Error(
+            `Invalid level "${levelHint}" for role "${targetRole}". Valid: ${validLevels.join(", ")}`,
+          );
         }
         // Remove old role:* labels, apply new hint
-        const oldRoleLabels = issue.labels.filter((l) => l.startsWith(`${targetRole}:`));
+        const oldRoleLabels = issue.labels.filter((l) =>
+          l.startsWith(`${targetRole}:`),
+        );
         if (oldRoleLabels.length > 0) {
           await provider.removeLabels(issueId, oldRoleLabels);
         }
@@ -111,12 +137,17 @@ Examples:
       applyNotifyLabel(provider, issueId, project, channelId, issue.labels);
 
       // Auto-assign owner label (best-effort)
-      autoAssignOwnerLabel(workspaceDir, provider, issueId, project).catch(() => {});
+      autoAssignOwnerLabel(workspaceDir, provider, issueId, project).catch(
+        () => {},
+      );
 
       await auditLog(workspaceDir, "task_start", {
-        project: project.name, issueId,
-        from: currentLabel, to: targetLabel,
-        transitioned, level: levelHint ?? null,
+        project: project.name,
+        issueId,
+        from: currentLabel,
+        to: targetLabel,
+        transitioned,
+        level: levelHint ?? null,
       });
 
       const levelMsg = levelHint ? ` (level hint: ${levelHint})` : "";
@@ -125,10 +156,15 @@ Examples:
         : `▶️ #${issueId} already in queue "${targetLabel}"${levelMsg} — heartbeat will dispatch.`;
 
       return jsonResult({
-        success: true, issueId, issueTitle: issue.title,
-        from: currentLabel, to: targetLabel, transitioned,
+        success: true,
+        issueId,
+        issueTitle: issue.title,
+        from: currentLabel,
+        to: targetLabel,
+        transitioned,
         level: levelHint ?? null,
-        project: project.name, announcement,
+        project: project.name,
+        announcement,
       });
     },
   });
@@ -151,26 +187,43 @@ function resolveTarget(
     case StateType.HOLD: {
       const approveTransition = currentState.on?.[WorkflowEvent.APPROVE];
       if (!approveTransition) {
-        throw new Error(`HOLD state "${currentLabel}" has no APPROVE transition.`);
+        throw new Error(
+          `HOLD state "${currentLabel}" has no APPROVE transition.`,
+        );
       }
-      const targetKey = typeof approveTransition === "string"
-        ? approveTransition
-        : approveTransition.target;
+      const targetKey =
+        typeof approveTransition === "string"
+          ? approveTransition
+          : approveTransition.target;
       const targetState = workflow.states[targetKey];
       if (!targetState) {
-        throw new Error(`Transition target "${targetKey}" not found in workflow.`);
+        throw new Error(
+          `Transition target "${targetKey}" not found in workflow.`,
+        );
       }
-      return { targetLabel: targetState.label, targetState, transitioned: true };
+      return {
+        targetLabel: targetState.label,
+        targetState,
+        transitioned: true,
+      };
     }
 
     case StateType.QUEUE:
-      return { targetLabel: currentLabel, targetState: currentState, transitioned: false };
+      return {
+        targetLabel: currentLabel,
+        targetState: currentState,
+        transitioned: false,
+      };
 
     case StateType.ACTIVE:
-      throw new Error(`Issue is in active state "${currentLabel}" — already being worked on.`);
+      throw new Error(
+        `Issue is in active state "${currentLabel}" — already being worked on.`,
+      );
 
     case StateType.TERMINAL:
-      throw new Error(`Issue is in terminal state "${currentLabel}" — cannot start.`);
+      throw new Error(
+        `Issue is in terminal state "${currentLabel}" — cannot start.`,
+      );
 
     default:
       throw new Error(`Unknown state type for "${currentLabel}".`);

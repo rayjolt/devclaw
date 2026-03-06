@@ -20,6 +20,14 @@ import { log as auditLog } from "../../audit.js";
 import { ciDiagnostics, getCiStatusWithRetry } from "../ci-gate.js";
 import { guardTerminalCompletion } from "../terminal-guard.js";
 import { postTerminalBlockedCommentOnce } from "../terminal-blocked-comment.js";
+import {
+  getNoChecksBreakerAttempts,
+  incrementNoChecksCounter,
+  isNoChecksUnknown,
+  postNoChecksBreakerCommentOnce,
+  postNoChecksUnderThresholdCommentOnce,
+  resetNoChecksCounter,
+} from "./ci-no-checks-circuit-breaker.js";
 
 /**
  * Scan review-type states and transition issues whose PR check condition is met.
@@ -72,6 +80,9 @@ export async function reviewPass(opts: {
     onPrClosed,
   } = opts;
   let transitions = 0;
+  const noChecksBreakerAttempts = getNoChecksBreakerAttempts(
+    workflow.ciNoChecksCircuitBreaker?.attempts,
+  );
 
   // Find all states with a review check (e.g. toReview with check: prApproved)
   const reviewStates = Object.entries(workflow.states).filter(
@@ -250,6 +261,11 @@ export async function reviewPass(opts: {
                 }
               }
             }
+            await resetNoChecksCounter({
+              workspaceDir,
+              projectName,
+              issueId: issue.iid,
+            });
             await auditLog(workspaceDir, "review_transition", {
               project: projectName,
               issueId: issue.iid,
@@ -278,6 +294,11 @@ export async function reviewPass(opts: {
         const ciReason = ciDiagnostics(ci);
 
         if (ci.state === CiState.PENDING) {
+          await resetNoChecksCounter({
+            workspaceDir,
+            projectName,
+            issueId: issue.iid,
+          });
           await auditLog(workspaceDir, "review_ci_pending", {
             project: projectName,
             issueId: issue.iid,
@@ -300,6 +321,98 @@ export async function reviewPass(opts: {
                 : failTransition.target;
             const targetState = workflow.states[targetKey];
             if (targetState) {
+              if (ci.state === CiState.FAIL) {
+                await resetNoChecksCounter({
+                  workspaceDir,
+                  projectName,
+                  issueId: issue.iid,
+                });
+              }
+
+              const noChecksUnknown =
+                ci.state === CiState.UNKNOWN && isNoChecksUnknown(ci.summary);
+
+              if (noChecksUnknown) {
+                const noChecksCount = await incrementNoChecksCounter({
+                  workspaceDir,
+                  projectName,
+                  issueId: issue.iid,
+                });
+
+                const refiningLabel =
+                  workflow.states.refining?.label ??
+                  Object.values(workflow.states).find(
+                    (s) =>
+                      s.type === "hold" && s.label.toLowerCase() === "refining",
+                  )?.label ??
+                  "Refining";
+
+                if (noChecksCount >= noChecksBreakerAttempts) {
+                  await provider.transitionLabel(
+                    issue.iid,
+                    state.label,
+                    refiningLabel,
+                  );
+                  try {
+                    await postNoChecksBreakerCommentOnce({
+                      provider,
+                      issueId: issue.iid,
+                      attempts: noChecksBreakerAttempts,
+                    });
+                  } catch {
+                    /* best effort */
+                  }
+                  await auditLog(workspaceDir, "review_transition", {
+                    project: projectName,
+                    issueId: issue.iid,
+                    from: state.label,
+                    to: refiningLabel,
+                    reason: "ci_no_checks_circuit_breaker",
+                    attempts,
+                    noChecksCount,
+                    noChecksThreshold: noChecksBreakerAttempts,
+                    ciSummary: ci.summary,
+                    prUrl: status.url,
+                  });
+                  transitions++;
+                  continue;
+                }
+
+                await provider.transitionLabel(
+                  issue.iid,
+                  state.label,
+                  targetState.label,
+                );
+                try {
+                  await postNoChecksUnderThresholdCommentOnce({
+                    provider,
+                    issueId: issue.iid,
+                    threshold: noChecksBreakerAttempts,
+                  });
+                } catch {
+                  /* best effort */
+                }
+                await auditLog(workspaceDir, "review_transition", {
+                  project: projectName,
+                  issueId: issue.iid,
+                  from: state.label,
+                  to: targetState.label,
+                  reason: "ci_unknown_no_checks",
+                  attempts,
+                  noChecksCount,
+                  noChecksThreshold: noChecksBreakerAttempts,
+                  ciSummary: ci.summary,
+                  prUrl: status.url,
+                });
+                transitions++;
+                continue;
+              }
+
+              await resetNoChecksCounter({
+                workspaceDir,
+                projectName,
+                issueId: issue.iid,
+              });
               await provider.transitionLabel(
                 issue.iid,
                 state.label,
@@ -330,6 +443,12 @@ export async function reviewPass(opts: {
             }
           }
         }
+
+        await resetNoChecksCounter({
+          workspaceDir,
+          projectName,
+          issueId: issue.iid,
+        });
       }
 
       // Find the success transition — use the APPROVED event (matches check condition)
@@ -478,6 +597,12 @@ export async function reviewPass(opts: {
       }
 
       if (aborted) continue; // skip normal transition, move to next issue
+
+      await resetNoChecksCounter({
+        workspaceDir,
+        projectName,
+        issueId: issue.iid,
+      });
 
       // Transition label
       await provider.transitionLabel(issue.iid, state.label, targetState.label);

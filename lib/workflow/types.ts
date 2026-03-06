@@ -73,11 +73,13 @@ export const WorkflowEvent = {
   PR_CLOSED: "PR_CLOSED",
 } as const;
 
-export type TransitionTarget = string | {
-  target: string;
-  actions?: TransitionAction[];
-  description?: string;
-};
+export type TransitionTarget =
+  | string
+  | {
+      target: string;
+      actions?: TransitionAction[];
+      description?: string;
+    };
 
 export type StateConfig = {
   type: StateType;
@@ -96,6 +98,11 @@ export type WorkflowConfig = {
   testPolicy?: TestPolicy;
   /** Opt-in CI gating for merge/finalization decisions. Default: false. */
   ciGating?: boolean;
+  /** Circuit breaker for repeated "no CI checks reported" outcomes. */
+  ciNoChecksCircuitBreaker?: {
+    /** Consecutive attempts before pausing to Refining. Default: 10. */
+    attempts?: number;
+  };
   roleExecution?: ExecutionMode;
   /** Default max workers per level across all roles. Default: 2. */
   maxWorkersPerLevel?: number;

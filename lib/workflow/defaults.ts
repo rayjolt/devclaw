@@ -17,6 +17,9 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
   reviewPolicy: ReviewPolicy.HUMAN,
   testPolicy: TestPolicy.SKIP,
   ciGating: false,
+  ciNoChecksCircuitBreaker: {
+    attempts: 10,
+  },
   roleExecution: ExecutionMode.PARALLEL,
   states: {
     // ── Main pipeline (happy path) ──────────────────────────────
@@ -40,7 +43,10 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
       label: "Doing",
       color: "#f0ad4e",
       on: {
-        [WorkflowEvent.COMPLETE]: { target: "toReview", actions: [Action.DETECT_PR] },
+        [WorkflowEvent.COMPLETE]: {
+          target: "toReview",
+          actions: [Action.DETECT_PR],
+        },
         [WorkflowEvent.BLOCKED]: "refining",
       },
     },
@@ -53,12 +59,21 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
       check: ReviewCheck.PR_APPROVED,
       on: {
         [WorkflowEvent.PICKUP]: "reviewing",
-        [WorkflowEvent.APPROVED]: { target: "toTest", actions: [Action.MERGE_PR, Action.GIT_PULL] },
-        [WorkflowEvent.SKIP]: { target: "toTest", actions: [Action.MERGE_PR, Action.GIT_PULL] },
+        [WorkflowEvent.APPROVED]: {
+          target: "toTest",
+          actions: [Action.MERGE_PR, Action.GIT_PULL],
+        },
+        [WorkflowEvent.SKIP]: {
+          target: "toTest",
+          actions: [Action.MERGE_PR, Action.GIT_PULL],
+        },
         [WorkflowEvent.MERGE_FAILED]: "toImprove",
         [WorkflowEvent.CHANGES_REQUESTED]: "toImprove",
         [WorkflowEvent.MERGE_CONFLICT]: "toImprove",
-        [WorkflowEvent.PR_CLOSED]: { target: "rejected", actions: [Action.CLOSE_ISSUE] },
+        [WorkflowEvent.PR_CLOSED]: {
+          target: "rejected",
+          actions: [Action.CLOSE_ISSUE],
+        },
       },
     },
     reviewing: {
@@ -67,7 +82,10 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
       label: "Reviewing",
       color: "#c5def5",
       on: {
-        [WorkflowEvent.APPROVE]: { target: "toTest", actions: [Action.MERGE_PR, Action.GIT_PULL] },
+        [WorkflowEvent.APPROVE]: {
+          target: "toTest",
+          actions: [Action.MERGE_PR, Action.GIT_PULL],
+        },
         [WorkflowEvent.REJECT]: "toImprove",
         [WorkflowEvent.BLOCKED]: "refining",
       },
@@ -91,7 +109,10 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
       color: "#9b59b6",
       on: {
         [WorkflowEvent.PASS]: { target: "done", actions: [Action.CLOSE_ISSUE] },
-        [WorkflowEvent.FAIL]: { target: "toImprove", actions: [Action.REOPEN_ISSUE] },
+        [WorkflowEvent.FAIL]: {
+          target: "toImprove",
+          actions: [Action.REOPEN_ISSUE],
+        },
         [WorkflowEvent.REFINE]: "refining",
         [WorkflowEvent.BLOCKED]: "refining",
       },
@@ -138,10 +159,12 @@ export const DEFAULT_WORKFLOW: WorkflowConfig = {
       label: "Researching",
       color: "#4a90e2",
       on: {
-        [WorkflowEvent.COMPLETE]: { target: "done", actions: [Action.CLOSE_ISSUE] },
+        [WorkflowEvent.COMPLETE]: {
+          target: "done",
+          actions: [Action.CLOSE_ISSUE],
+        },
         [WorkflowEvent.BLOCKED]: "refining",
       },
     },
-
   },
 };

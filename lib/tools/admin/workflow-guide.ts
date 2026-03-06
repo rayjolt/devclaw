@@ -33,7 +33,15 @@ export function createWorkflowGuideTool(_ctx: PluginContext) {
             "Optional: narrow to a specific topic. " +
             'Options: "overview", "states", "roles", "review", "testing", "timeouts", "overrides". ' +
             "Omit for the full guide.",
-          enum: ["overview", "states", "roles", "review", "testing", "timeouts", "overrides"],
+          enum: [
+            "overview",
+            "states",
+            "roles",
+            "review",
+            "testing",
+            "timeouts",
+            "overrides",
+          ],
         },
       },
     },
@@ -312,7 +320,25 @@ workflow:
   reviewPolicy: agent
 \`\`\`
 
-The reviewer role must be configured (it is by default) and needs a prompt file at \`<dataDir>/prompts/reviewer.md\`.`;
+The reviewer role must be configured (it is by default) and needs a prompt file at \`<dataDir>/prompts/reviewer.md\`.
+
+## CI no-checks circuit breaker (optional, recommended with ciGating)
+
+When CI gating is enabled, repeated \`No CI checks reported for PR\` outcomes can cause a loop (\`To Review → To Improve → Doing → To Review\`).
+
+Configure:
+
+\`\`\`yaml
+workflow:
+  ciNoChecksCircuitBreaker:
+    attempts: 10  # default
+\`\`\`
+
+Behavior:
+- Tracks consecutive "no checks reported" outcomes per issue (persists across commits)
+- Does **not** reset on new commits/SHA changes
+- Resets when CI reports PASS/FAIL/PENDING, when issue is re-queued manually via \`task_start\`, or on issue close
+- On threshold, issue auto-moves to \`Refining\` with operator guidance comment`;
 }
 
 function buildTestingSection(): string {
