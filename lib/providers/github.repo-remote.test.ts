@@ -15,6 +15,28 @@ function ok(stdout: string) {
 }
 
 describe("GitHubProvider repoRemote binding", () => {
+  it("does not append --repo to global gh auth status health checks", async () => {
+    const calls: Array<{ cmd: string[]; cwd?: string }> = [];
+    const runCommand: RunCommand = async (cmd, opts) => {
+      calls.push({ cmd, cwd: typeof opts === "object" ? opts?.cwd : undefined });
+      return ok("");
+    };
+
+    const provider = new GitHubProvider({
+      repoPath: "/fake/repo",
+      repoRemote: "https://github.com/rayjolt/devclaw.git",
+      runCommand,
+    });
+
+    const healthy = await provider.healthCheck();
+
+    assert.equal(healthy, true);
+    assert.deepEqual(calls, [{
+      cmd: ["gh", "auth", "status"],
+      cwd: "/fake/repo",
+    }]);
+  });
+
   it("binds gh issue commands to the configured repo when extra remotes exist", async () => {
     const calls: Array<{ cmd: string[]; cwd?: string }> = [];
     const runCommand: RunCommand = async (cmd, opts) => {

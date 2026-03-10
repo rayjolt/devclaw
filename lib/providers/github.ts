@@ -31,6 +31,8 @@ type GhIssue = {
   url: string;
 };
 
+const GH_REPO_SCOPED_COMMANDS = new Set(["issue", "pr", "label", "repo"]);
+
 function toIssue(gh: GhIssue): Issue {
   return {
     iid: gh.number, title: gh.title, description: gh.body ?? "",
@@ -54,6 +56,13 @@ function parseGitHubRepo(remote?: string): { owner: string; name: string } | nul
   }
 
   return null;
+}
+
+function supportsRepoSelection(args: string[]): boolean {
+  const command = args[0];
+  if (!command) return false;
+
+  return GH_REPO_SCOPED_COMMANDS.has(command);
 }
 
 export class GitHubProvider implements IssueProvider {
@@ -93,6 +102,8 @@ export class GitHubProvider implements IssueProvider {
       }
       return built;
     }
+
+    if (!supportsRepoSelection(args)) return args;
 
     const hasRepoFlag = args.includes("-R") || args.includes("--repo");
     if (hasRepoFlag) return args;
