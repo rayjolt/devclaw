@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { log as auditLog } from "../audit.js";
+import { DATA_DIR } from "../setup/migrate-layout.js";
 import { createTestHarness } from "../testing/index.js";
-import { guardDispatchLoop } from "./dispatch-loop-guard.js";
+import {
+  countRecentDispatchesSinceLastQuarantine,
+  guardDispatchLoop,
+} from "./dispatch-loop-guard.js";
 
 describe("guardDispatchLoop", () => {
   it("quarantines a hot loop once, then allows immediate manual recovery", async () => {
@@ -67,6 +73,62 @@ describe("guardDispatchLoop", () => {
         1,
         "manual recovery should not trigger a second quarantine comment",
       );
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("counts only dispatches after the most recent quarantine event", async () => {
+    const h = await createTestHarness();
+
+    try {
+      const auditDir = join(h.workspaceDir, DATA_DIR, "log");
+      const auditPath = join(auditDir, "audit.log");
+      const now = Date.parse("2026-03-10T12:00:00.000Z");
+
+      await mkdir(auditDir, { recursive: true });
+      await writeFile(
+        auditPath,
+        [
+          {
+            ts: "2026-03-10T11:55:00.000Z",
+            event: "dispatch",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:56:00.000Z",
+            event: "dispatch",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:57:00.000Z",
+            event: "dispatch",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:58:00.000Z",
+            event: "dispatch_loop_quarantined",
+            issue: 96,
+            role: "developer",
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+        "utf-8",
+      );
+
+      const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
+        workspaceDir: h.workspaceDir,
+        issueId: 96,
+        role: "developer",
+        now,
+        windowMs: 10 * 60 * 1000,
+      });
+
+      assert.equal(recentDispatches, 0);
     } finally {
       await h.cleanup();
     }

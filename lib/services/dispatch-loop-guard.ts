@@ -77,7 +77,7 @@ export async function countRecentDispatchesSinceLastQuarantine(opts: {
   for (const entry of entries) {
     if (entry.event !== "dispatch_loop_quarantined") continue;
     const time = getEntryTime(entry);
-    if (time !== null && time >= cutoff && time > lastQuarantineTs) {
+    if (time !== null && time > lastQuarantineTs) {
       lastQuarantineTs = time;
     }
   }
