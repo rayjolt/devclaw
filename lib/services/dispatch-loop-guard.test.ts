@@ -11,39 +11,102 @@ import {
   guardDispatchLoop,
 } from "./dispatch-loop-guard.js";
 
+async function withMockedNow<T>(
+  isoTime: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const RealDate = Date;
+  const fixedTime = RealDate.parse(isoTime);
+
+  class MockDate extends RealDate {
+    constructor(value?: string | number | Date) {
+      super(value ?? fixedTime);
+    }
+
+    static override now(): number {
+      return fixedTime;
+    }
+  }
+
+  globalThis.Date = MockDate as DateConstructor;
+  try {
+    return await run();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+}
+
 describe("guardDispatchLoop", () => {
   it("quarantines a hot loop once, then allows immediate manual recovery", async () => {
     const h = await createTestHarness();
 
     try {
+      const auditDir = join(h.workspaceDir, DATA_DIR, "log");
+      const auditPath = join(auditDir, "audit.log");
+      const now = Date.parse("2026-03-10T12:08:00.000Z");
+
       h.provider.seedIssue({
         iid: 96,
         title: "Recoverable dispatch loop",
         labels: ["To Do"],
       });
 
-      for (let i = 0; i < 3; i++) {
-        await auditLog(h.workspaceDir, "dispatch", {
-          project: h.project.name,
-          issue: 96,
+      await mkdir(auditDir, { recursive: true });
+      await writeFile(
+        auditPath,
+        [
+          {
+            ts: "2026-03-10T12:05:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            issueTitle: "Recoverable dispatch loop",
+            role: "developer",
+            level: "senior",
+            sessionKey: "session-0",
+            labelTransition: "To Do → Doing",
+          },
+          {
+            ts: "2026-03-10T12:06:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            issueTitle: "Recoverable dispatch loop",
+            role: "developer",
+            level: "senior",
+            sessionKey: "session-1",
+            labelTransition: "To Do → Doing",
+          },
+          {
+            ts: "2026-03-10T12:07:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            issueTitle: "Recoverable dispatch loop",
+            role: "developer",
+            level: "senior",
+            sessionKey: "session-2",
+            labelTransition: "To Do → Doing",
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+        "utf-8",
+      );
+
+      const first = await withMockedNow("2026-03-10T12:04:00.000Z", async () =>
+        guardDispatchLoop({
+          workspaceDir: h.workspaceDir,
+          provider: h.provider,
+          projectName: h.project.name,
+          issueId: 96,
           issueTitle: "Recoverable dispatch loop",
           role: "developer",
-          level: "senior",
-          sessionKey: `session-${i}`,
-          labelTransition: "To Do → Doing",
-        });
-      }
-
-      const first = await guardDispatchLoop({
-        workspaceDir: h.workspaceDir,
-        provider: h.provider,
-        projectName: h.project.name,
-        issueId: 96,
-        issueTitle: "Recoverable dispatch loop",
-        role: "developer",
-        fromLabel: "To Do",
-        quarantineLabel: "Refining",
-      });
+          fromLabel: "To Do",
+          quarantineLabel: "Refining",
+          now,
+        }),
+      );
 
       assert.equal(first.quarantined, true);
 
@@ -64,6 +127,7 @@ describe("guardDispatchLoop", () => {
         role: "developer",
         fromLabel: "To Do",
         quarantineLabel: "Refining",
+        now,
       });
 
       assert.equal(second.quarantined, false);
@@ -132,7 +196,7 @@ describe("guardDispatchLoop", () => {
             role: "developer",
           },
           {
-            ts: "2026-03-10T11:58:00.000Z",
+            ts: "2026-03-10T11:54:00.000Z",
             event: "dispatch_loop_quarantined",
             issue: 96,
             role: "developer",
