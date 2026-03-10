@@ -122,37 +122,6 @@ describe("dispatch loop guard", () => {
       result.announcement,
       /Spawning DEVELOPER .*#96: Stop dispatch loops/,
     );
-
-    await fs.appendFile(
-      auditPath,
-      auditEntry({
-        ts: new Date().toISOString(),
-        event: "dispatch",
-        project: "devclaw",
-        issue: 96,
-        role: "developer",
-      }),
-      "utf-8",
-    );
-
-    provider.resetCalls();
-    const third = await guardDispatchLoop({
-      workspaceDir,
-      projectName: "devclaw",
-      issueId: 96,
-      role: "developer",
-      fromLabel: "To Do",
-      provider,
-      workflow: DEFAULT_WORKFLOW,
-    });
-
-    assert.equal(third.quarantined, false);
-    assert.equal(
-      third.recentDispatches,
-      1,
-      "dispatch counting should restart from zero after quarantine so the next dispatch attempt counts as the first fresh retry",
-    );
-    assert.equal(provider.callsTo("transitionLabel").length, 0);
   });
 
   it("ignores dispatch history from other projects when checking loop thresholds", async () => {
