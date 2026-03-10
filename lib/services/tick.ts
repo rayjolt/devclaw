@@ -113,6 +113,7 @@ export async function projectTick(opts: {
       await createProvider({
         repo: project.repo,
         provider: project.provider,
+        repoRemote: project.repoRemote,
         runCommand: runCommand!,
       })
     ).provider;
