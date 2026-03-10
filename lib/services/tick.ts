@@ -34,6 +34,7 @@ import {
   detectStepRouting,
   findNextIssueForRole,
 } from "./queue-scan.js";
+import { guardDispatchLoop } from "./dispatch-loop-guard.js";
 
 // ---------------------------------------------------------------------------
 // projectTick
@@ -254,6 +255,24 @@ export async function projectTick(opts: {
 
     const { issue, label: currentLabel } = next;
     const targetLabel = getActiveLabel(workflow, role);
+
+    const loopGuard = await guardDispatchLoop({
+      workspaceDir,
+      provider,
+      projectName: project.name,
+      issueId: issue.iid,
+      issueTitle: issue.title,
+      role,
+      fromLabel: currentLabel,
+      quarantineLabel: refiningLabel,
+    });
+    if (loopGuard.quarantined) {
+      skipped.push({
+        role,
+        reason: `Issue #${issue.iid} moved to ${loopGuard.quarantineLabel}: dispatch loop detected after ${loopGuard.recentDispatches} recent dispatches`,
+      });
+      continue;
+    }
 
     // Level selection: label → heuristic (must happen before free slot check)
     const selectedLevel = resolveLevelForIssue(issue, role);
