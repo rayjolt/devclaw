@@ -21,6 +21,7 @@ export type DispatchLoopGuardResult =
 type AuditEntry = {
   ts?: string;
   event?: string;
+  project?: string;
   issue?: number;
   role?: string;
 };
@@ -46,6 +47,7 @@ function getEntryTime(entry: AuditEntry): number | null {
 
 export async function countRecentDispatchesSinceLastQuarantine(opts: {
   workspaceDir: string;
+  projectName: string;
   issueId: number;
   role: string;
   now?: number;
@@ -53,6 +55,7 @@ export async function countRecentDispatchesSinceLastQuarantine(opts: {
 }): Promise<number> {
   const {
     workspaceDir,
+    projectName,
     issueId,
     role,
     now = Date.now(),
@@ -70,7 +73,10 @@ export async function countRecentDispatchesSinceLastQuarantine(opts: {
 
   const cutoff = now - windowMs;
   const entries = parseAuditEntries(content).filter(
-    (entry) => entry.issue === issueId && entry.role === role,
+    (entry) =>
+      entry.project === projectName &&
+      entry.issue === issueId &&
+      entry.role === role,
   );
 
   let lastQuarantineIndex = -1;
@@ -125,6 +131,7 @@ export async function guardDispatchLoop(opts: {
 
   const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
     workspaceDir,
+    projectName,
     issueId,
     role,
     now,

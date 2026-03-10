@@ -151,6 +151,7 @@ describe("guardDispatchLoop", () => {
       const postRecoveryDispatches =
         await countRecentDispatchesSinceLastQuarantine({
           workspaceDir: h.workspaceDir,
+          projectName: h.project.name,
           issueId: 96,
           role: "developer",
         });
@@ -180,24 +181,28 @@ describe("guardDispatchLoop", () => {
           {
             ts: "2026-03-10T11:55:00.000Z",
             event: "dispatch",
+            project: h.project.name,
             issue: 96,
             role: "developer",
           },
           {
             ts: "2026-03-10T11:56:00.000Z",
             event: "dispatch",
+            project: h.project.name,
             issue: 96,
             role: "developer",
           },
           {
             ts: "2026-03-10T11:57:00.000Z",
             event: "dispatch",
+            project: h.project.name,
             issue: 96,
             role: "developer",
           },
           {
             ts: "2026-03-10T11:54:00.000Z",
             event: "dispatch_loop_quarantined",
+            project: h.project.name,
             issue: 96,
             role: "developer",
           },
@@ -209,6 +214,7 @@ describe("guardDispatchLoop", () => {
 
       const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
         workspaceDir: h.workspaceDir,
+        projectName: h.project.name,
         issueId: 96,
         role: "developer",
         now,
@@ -216,6 +222,179 @@ describe("guardDispatchLoop", () => {
       });
 
       assert.equal(recentDispatches, 0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("ignores dispatches and quarantine events from other projects with the same issue and role", async () => {
+    const h = await createTestHarness();
+
+    try {
+      const auditDir = join(h.workspaceDir, DATA_DIR, "log");
+      const auditPath = join(auditDir, "audit.log");
+      const now = Date.parse("2026-03-10T12:08:00.000Z");
+
+      h.provider.seedIssue({
+        iid: 96,
+        title: "Project-scoped dispatch loop",
+        labels: ["To Do"],
+      });
+
+      await mkdir(auditDir, { recursive: true });
+      await writeFile(
+        auditPath,
+        [
+          {
+            ts: "2026-03-10T12:02:00.000Z",
+            event: "dispatch_loop_quarantined",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:05:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:06:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:07:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:04:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            role: "developer",
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+        "utf-8",
+      );
+
+      const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
+        workspaceDir: h.workspaceDir,
+        projectName: h.project.name,
+        issueId: 96,
+        role: "developer",
+        now,
+        windowMs: 10 * 60 * 1000,
+      });
+
+      assert.equal(
+        recentDispatches,
+        1,
+        "only dispatches from the current project should count",
+      );
+
+      const result = await guardDispatchLoop({
+        workspaceDir: h.workspaceDir,
+        provider: h.provider,
+        projectName: h.project.name,
+        issueId: 96,
+        issueTitle: "Project-scoped dispatch loop",
+        role: "developer",
+        fromLabel: "To Do",
+        quarantineLabel: "Refining",
+        now,
+      });
+
+      assert.equal(result.quarantined, false);
+      assert.equal(result.recentDispatches, 1);
+      assert.equal(h.provider.callsTo("transitionLabel").length, 0);
+      assert.equal(h.provider.callsTo("addComment").length, 0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("ignores dispatches from other projects with the same issue id and role", async () => {
+    const h = await createTestHarness();
+
+    try {
+      const auditDir = join(h.workspaceDir, DATA_DIR, "log");
+      const auditPath = join(auditDir, "audit.log");
+      const now = Date.parse("2026-03-10T12:08:00.000Z");
+
+      h.provider.seedIssue({
+        iid: 96,
+        title: "Project-scoped dispatch loop",
+        labels: ["To Do"],
+      });
+
+      await mkdir(auditDir, { recursive: true });
+      await writeFile(
+        auditPath,
+        [
+          {
+            ts: "2026-03-10T12:05:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:06:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T12:07:00.000Z",
+            event: "dispatch",
+            project: "other-project",
+            issue: 96,
+            role: "developer",
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+        "utf-8",
+      );
+
+      const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
+        workspaceDir: h.workspaceDir,
+        projectName: h.project.name,
+        issueId: 96,
+        role: "developer",
+        now,
+      });
+
+      assert.equal(recentDispatches, 0);
+
+      const result = await guardDispatchLoop({
+        workspaceDir: h.workspaceDir,
+        provider: h.provider,
+        projectName: h.project.name,
+        issueId: 96,
+        issueTitle: "Project-scoped dispatch loop",
+        role: "developer",
+        fromLabel: "To Do",
+        quarantineLabel: "Refining",
+        now,
+      });
+
+      assert.equal(result.quarantined, false);
+      assert.equal(result.recentDispatches, 0);
+
+      const issue = await h.provider.getIssue(96);
+      assert.deepEqual(issue.labels, ["To Do"]);
+      assert.equal(h.provider.callsTo("addComment").length, 0);
     } finally {
       await h.cleanup();
     }
