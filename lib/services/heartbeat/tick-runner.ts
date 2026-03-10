@@ -115,6 +115,7 @@ export async function tick(opts: {
       const { provider } = await createProvider({
         repo: project.repo,
         provider: project.provider,
+        repoRemote: project.repoRemote,
         runCommand,
       });
       const resolvedConfig = await loadConfig(workspaceDir, project.name);

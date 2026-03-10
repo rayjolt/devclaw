@@ -31,6 +31,8 @@ type GhIssue = {
   url: string;
 };
 
+const GH_REPO_SCOPED_COMMANDS = new Set(["issue", "pr", "label", "repo"]);
+
 function toIssue(gh: GhIssue): Issue {
   return {
     iid: gh.number, title: gh.title, description: gh.body ?? "",
@@ -38,25 +40,74 @@ function toIssue(gh: GhIssue): Issue {
   };
 }
 
+function parseGitHubRepo(remote?: string): { owner: string; name: string } | null {
+  const value = remote?.trim();
+  if (!value) return null;
+
+  const patterns = [
+    /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i,
+    /^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match) return { owner: match[1]!, name: match[2]! };
+  }
+
+  return null;
+}
+
+function supportsRepoSelection(args: string[]): boolean {
+  const command = args[0];
+  if (!command) return false;
+
+  return GH_REPO_SCOPED_COMMANDS.has(command);
+}
+
 export class GitHubProvider implements IssueProvider {
   private repoPath: string;
   private workflow: WorkflowConfig;
   private runCommand: RunCommand;
+  private repoRemote?: string;
 
-  constructor(opts: { repoPath: string; runCommand: RunCommand; workflow?: WorkflowConfig }) {
+  constructor(opts: { repoPath: string; repoRemote?: string; runCommand: RunCommand; workflow?: WorkflowConfig }) {
     this.repoPath = opts.repoPath;
+    this.repoRemote = opts.repoRemote;
     this.runCommand = opts.runCommand;
     this.workflow = opts.workflow ?? DEFAULT_WORKFLOW;
   }
 
   private async gh(args: string[]): Promise<string> {
     return withResilience(async () => {
-      const result = await this.runCommand(["gh", ...args], { timeoutMs: 30_000, cwd: this.repoPath });
+      const command = await this.buildGhArgs(args);
+      const result = await this.runCommand(["gh", ...command], { timeoutMs: 30_000, cwd: this.repoPath });
       if (result.code != null && result.code !== 0) {
         throw new Error(result.stderr?.trim() || `gh command failed with exit code ${result.code}`);
       }
       return result.stdout.trim();
     });
+  }
+
+  private async buildGhArgs(args: string[]): Promise<string[]> {
+    const repo = this.repoInfo ?? parseGitHubRepo(this.repoRemote);
+    if (!repo) return args;
+
+    if (args[0] === "api") {
+      const built = [...args];
+      if (typeof built[1] === "string") {
+        built[1] = built[1]
+          .replaceAll(":owner", repo.owner)
+          .replaceAll(":repo", repo.name);
+      }
+      return built;
+    }
+
+    if (!supportsRepoSelection(args)) return args;
+
+    const hasRepoFlag = args.includes("-R") || args.includes("--repo");
+    if (hasRepoFlag) return args;
+    return [...args, "--repo", `${repo.owner}/${repo.name}`];
   }
 
   /** Cached repo owner/name for GraphQL queries. */
@@ -68,6 +119,13 @@ export class GitHubProvider implements IssueProvider {
    */
   private async getRepoInfo(): Promise<{ owner: string; name: string } | null> {
     if (this.repoInfo !== undefined) return this.repoInfo;
+
+    const parsedRemote = parseGitHubRepo(this.repoRemote);
+    if (parsedRemote) {
+      this.repoInfo = parsedRemote;
+      return this.repoInfo;
+    }
+
     try {
       const raw = await this.gh(["repo", "view", "--json", "owner,name"]);
       const data = JSON.parse(raw);

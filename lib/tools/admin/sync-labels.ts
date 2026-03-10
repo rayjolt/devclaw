@@ -81,6 +81,7 @@ export function createSyncLabelsTool(ctx: PluginContext) {
           const { provider } = await createProvider({
             repo: project.repo,
             provider: project.provider,
+            repoRemote: project.repoRemote,
             runCommand: ctx.runCommand,
           });
 

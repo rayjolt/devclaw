@@ -58,7 +58,12 @@ export async function resolveProject(
  * Uses stored provider type from project config if available, otherwise auto-detects.
  */
 export async function resolveProvider(project: Project, runCommand: RunCommand): Promise<ProviderWithType> {
-  return createProvider({ repo: project.repo, provider: project.provider, runCommand });
+  return createProvider({
+    repo: project.repo,
+    provider: project.provider,
+    repoRemote: project.repoRemote,
+    runCommand,
+  });
 }
 
 /**

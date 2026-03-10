@@ -11,6 +11,7 @@ export type ProviderOptions = {
   provider?: "gitlab" | "github";
   repo?: string;
   repoPath?: string;
+  repoRemote?: string;
   runCommand: RunCommand;
 };
 
@@ -19,7 +20,14 @@ export type ProviderWithType = {
   type: "github" | "gitlab";
 };
 
-async function detectProvider(repoPath: string, runCommand: RunCommand): Promise<"gitlab" | "github"> {
+async function detectProvider(
+  repoPath: string,
+  runCommand: RunCommand,
+  repoRemote?: string,
+): Promise<"gitlab" | "github"> {
+  const remote = repoRemote?.trim();
+  if (remote) return remote.includes("github.com") ? "github" : "gitlab";
+
   try {
     const result = await runCommand(["git", "remote", "get-url", "origin"], { timeoutMs: 5_000, cwd: repoPath });
     return result.stdout.trim().includes("github.com") ? "github" : "gitlab";
@@ -32,9 +40,9 @@ export async function createProvider(opts: ProviderOptions): Promise<ProviderWit
   const repoPath = opts.repoPath ?? (opts.repo ? resolveRepoPath(opts.repo) : null);
   if (!repoPath) throw new Error("Either repoPath or repo must be provided");
   const rc = opts.runCommand;
-  const type = opts.provider ?? await detectProvider(repoPath, rc);
+  const type = opts.provider ?? await detectProvider(repoPath, rc, opts.repoRemote);
   const provider = type === "github"
-    ? new GitHubProvider({ repoPath, runCommand: rc })
+    ? new GitHubProvider({ repoPath, repoRemote: opts.repoRemote, runCommand: rc })
     : new GitLabProvider({ repoPath, runCommand: rc });
   return { provider, type };
 }
