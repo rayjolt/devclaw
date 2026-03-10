@@ -73,6 +73,29 @@ describe("guardDispatchLoop", () => {
         1,
         "manual recovery should not trigger a second quarantine comment",
       );
+
+      await auditLog(h.workspaceDir, "dispatch", {
+        project: h.project.name,
+        issue: 96,
+        issueTitle: "Recoverable dispatch loop",
+        role: "developer",
+        level: "senior",
+        sessionKey: "session-recovered",
+        labelTransition: "To Do → Doing",
+      });
+
+      const postRecoveryDispatches =
+        await countRecentDispatchesSinceLastQuarantine({
+          workspaceDir: h.workspaceDir,
+          issueId: 96,
+          role: "developer",
+        });
+
+      assert.equal(
+        postRecoveryDispatches,
+        1,
+        "dispatch counting should restart from zero after quarantine so immediate requeue can recover",
+      );
     } finally {
       await h.cleanup();
     }
