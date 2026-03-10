@@ -87,25 +87,17 @@ export function resolveRejectedWorkFinishIssueId(
   roleWorker: RoleWorkerState,
   sessionKey?: string,
 ): number | null {
-  if (sessionKey) {
-    for (const slots of Object.values(roleWorker.levels)) {
-      for (const slot of slots) {
-        if (slot.sessionKey !== sessionKey) continue;
-        const issueId = getSlotIssueId(slot);
-        if (issueId !== null) return issueId;
-      }
+  if (!sessionKey) return null;
+
+  for (const slots of Object.values(roleWorker.levels)) {
+    for (const slot of slots) {
+      if (slot.sessionKey !== sessionKey) continue;
+      const issueId = getSlotIssueId(slot);
+      if (issueId !== null) return issueId;
     }
-    return null;
   }
 
-  const activeIssueIds = Object.values(roleWorker.levels)
-    .flatMap((slots) => slots)
-    .filter((slot) => slot.active)
-    .map((slot) => getSlotIssueId(slot))
-    .filter((issueId): issueId is number => issueId !== null);
-
-  const uniqueActiveIssueIds = [...new Set(activeIssueIds)];
-  return uniqueActiveIssueIds.length === 1 ? uniqueActiveIssueIds[0]! : null;
+  return null;
 }
 
 /**

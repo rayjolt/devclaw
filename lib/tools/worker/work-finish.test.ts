@@ -131,7 +131,7 @@ describe("work_finish: PR validation and conflict resolution", () => {
       assert.equal(resolveRejectedWorkFinishIssueId(roleWorker), null);
     });
 
-    it("allows a warning when there is exactly one unambiguous active issue", () => {
+    it("does not infer an issue from active slots when session key is missing", () => {
       const roleWorker: RoleWorkerState = {
         levels: {
           medior: [
@@ -153,7 +153,7 @@ describe("work_finish: PR validation and conflict resolution", () => {
         },
       };
 
-      assert.equal(resolveRejectedWorkFinishIssueId(roleWorker), 77);
+      assert.equal(resolveRejectedWorkFinishIssueId(roleWorker), null);
     });
   });
 
