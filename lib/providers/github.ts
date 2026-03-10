@@ -66,9 +66,9 @@ function parseGitHubRepo(
 
 function supportsRepoSelection(args: string[]): boolean {
   const command = args[0];
-  if (!command) return false;
-
-  return GH_REPO_SCOPED_COMMANDS.has(command);
+  if (!command || !GH_REPO_SCOPED_COMMANDS.has(command)) return false;
+  if (command === "repo" && args[1] !== "view") return false;
+  return true;
 }
 
 export class GitHubProvider implements IssueProvider {
