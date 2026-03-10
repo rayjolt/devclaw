@@ -171,4 +171,61 @@ describe("dispatch loop guard", () => {
       /Spawning DEVELOPER .*#96: Stop dispatch loops/,
     );
   });
+
+  it("does not quarantine legitimate rapid feedback cycles after successful completions", async () => {
+    h = await createTestHarness();
+    h.provider.seedIssue({
+      iid: 96,
+      title: "Stop dispatch loops",
+      labels: ["To Improve"],
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await auditLog(h.workspaceDir, "dispatch", {
+        project: h.project.name,
+        issue: 96,
+        issueTitle: "Stop dispatch loops",
+        role: "developer",
+        level: "senior",
+        sessionAction: "send",
+        sessionKey: `feedback-cycle-${i}`,
+        labelTransition: "To Improve → Doing",
+      });
+
+      await auditLog(h.workspaceDir, "work_finish", {
+        project: h.project.name,
+        issue: 96,
+        issueTitle: "Stop dispatch loops",
+        role: "developer",
+        result: "done",
+        labelTransition: "Doing → Reviewing",
+      });
+    }
+
+    const result = await dispatchTask({
+      workspaceDir: h.workspaceDir,
+      agentId: "test-agent",
+      project: h.project,
+      issueId: 96,
+      issueTitle: "Stop dispatch loops",
+      issueDescription: "",
+      issueUrl: "https://github.com/rayjolt/devclaw/issues/96",
+      role: "developer",
+      level: "senior",
+      fromLabel: "To Improve",
+      toLabel: "Doing",
+      provider: h.provider,
+      runCommand: h.runCommand,
+    });
+
+    const issue = await h.provider.getIssue(96);
+    assert.ok(issue.labels.includes("Doing"));
+    assert.ok(!issue.labels.includes("Refining"));
+    assert.ok(!issue.labels.includes("workflow:desync"));
+    assert.equal(h.commands.taskMessages().length, 1);
+    assert.match(
+      result.announcement,
+      /Spawning DEVELOPER .*#96: Stop dispatch loops/,
+    );
+  });
 });

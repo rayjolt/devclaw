@@ -35,6 +35,15 @@ type AuditEntry = {
   labelTransition?: string;
 };
 
+function latestTimestamp(entries: AuditEntry[], event: string): number {
+  return entries
+    .filter((entry) => entry.event === event)
+    .reduce<number>((latest, entry) => {
+      const ts = entry.ts ? Date.parse(entry.ts) : NaN;
+      return Number.isFinite(ts) ? Math.max(latest, ts) : latest;
+    }, Number.NEGATIVE_INFINITY);
+}
+
 async function countRecentDispatches(
   workspaceDir: string,
   projectName: string,
@@ -68,19 +77,22 @@ async function countRecentDispatches(
           entry.role === role,
       );
 
-    const lastQuarantineTs = entries
-      .filter((entry) => entry.event === "dispatch_loop_quarantined")
-      .reduce<number>((latest, entry) => {
-        const ts = entry.ts ? Date.parse(entry.ts) : NaN;
-        return Number.isFinite(ts) ? Math.max(latest, ts) : latest;
-      }, Number.NEGATIVE_INFINITY);
+    const lastQuarantineTs = latestTimestamp(
+      entries,
+      "dispatch_loop_quarantined",
+    );
+    const lastSuccessfulCompletionTs = latestTimestamp(entries, "work_finish");
+    const activeCycleStart = Math.max(
+      lastQuarantineTs,
+      lastSuccessfulCompletionTs,
+    );
 
     return entries
       .filter((entry) => entry.event === "dispatch")
       .filter((entry) => {
-        if (!Number.isFinite(lastQuarantineTs)) return true;
+        if (!Number.isFinite(activeCycleStart)) return true;
         const ts = entry.ts ? Date.parse(entry.ts) : NaN;
-        return Number.isFinite(ts) && ts > lastQuarantineTs;
+        return Number.isFinite(ts) && ts > activeCycleStart;
       }).length;
   } catch {
     return 0;
