@@ -17,6 +17,7 @@ import {
   resolveRepoPath,
   findSlotByIssue,
 } from "../../projects/index.js";
+import type { RoleWorkerState, SlotState } from "../../projects/types.js";
 import { executeCompletion, getRule } from "../../services/pipeline.js";
 import { log as auditLog } from "../../audit.js";
 import { DATA_DIR } from "../../setup/migrate-layout.js";
@@ -73,6 +74,38 @@ async function maybeCommentOnRejectedWorkFinish(opts: {
       `${marker}`,
   );
   return true;
+}
+
+function getSlotIssueId(slot: SlotState): number | null {
+  const candidate = slot.issueId ?? slot.lastIssueId;
+  if (!candidate) return null;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function resolveRejectedWorkFinishIssueId(
+  roleWorker: RoleWorkerState,
+  sessionKey?: string,
+): number | null {
+  if (sessionKey) {
+    for (const slots of Object.values(roleWorker.levels)) {
+      for (const slot of slots) {
+        if (slot.sessionKey !== sessionKey) continue;
+        const issueId = getSlotIssueId(slot);
+        if (issueId !== null) return issueId;
+      }
+    }
+    return null;
+  }
+
+  const activeIssueIds = Object.values(roleWorker.levels)
+    .flatMap((slots) => slots)
+    .filter((slot) => slot.active)
+    .map((slot) => getSlotIssueId(slot))
+    .filter((issueId): issueId is number => issueId !== null);
+
+  const uniqueActiveIssueIds = [...new Set(activeIssueIds)];
+  return uniqueActiveIssueIds.length === 1 ? uniqueActiveIssueIds[0]! : null;
 }
 
 /**
@@ -321,7 +354,10 @@ export function createWorkFinishTool(ctx: PluginContext) {
       const { provider } = await resolveProvider(project, ctx.runCommand);
       const workflow = await loadWorkflow(workspaceDir, project.name);
 
-      let relatedIssueId: number | null = null;
+      const relatedIssueId = resolveRejectedWorkFinishIssueId(
+        roleWorker,
+        toolCtx.sessionKey,
+      );
 
       // Find the first active slot across all levels
       let slotIndex: number | null = null;
@@ -336,8 +372,6 @@ export function createWorkFinishTool(ctx: PluginContext) {
             !slot.sessionKey ||
             slot.sessionKey === toolCtx.sessionKey;
           if (!sessionMatches) continue;
-          if (slot.issueId) relatedIssueId = Number(slot.issueId);
-          else if (slot.lastIssueId) relatedIssueId = Number(slot.lastIssueId);
 
           if (slot.active && slot.issueId) {
             slotLevel = level;
