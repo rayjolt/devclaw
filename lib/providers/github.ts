@@ -677,14 +677,14 @@ export class GitHubProvider implements IssueProvider {
       pr: CiPr;
       state: "open" | "merged";
     } | null> => {
-      const merged = await getCiPrs("merged");
-      if (merged.length > 0) {
-        return { pr: merged[0], state: "merged" };
-      }
-
       const open = await getCiPrs("open");
       if (open.length > 0) {
         return { pr: open[0], state: "open" };
+      }
+
+      const merged = await getCiPrs("merged");
+      if (merged.length > 0) {
+        return { pr: merged[0], state: "merged" };
       }
 
       return null;
@@ -696,7 +696,7 @@ export class GitHubProvider implements IssueProvider {
         state: CiState.UNKNOWN,
         failedChecks: [],
         pendingChecks: [],
-        summary: "No open PR found for CI status",
+        summary: "No open or merged PR found for CI status",
       };
     }
 
@@ -935,9 +935,7 @@ export class GitHubProvider implements IssueProvider {
    * These are comments on the PR timeline (not inline review comments).
    * Excludes only bot accounts and empty bodies.
    */
-  private async fetchConversationComments(
-    prNumber: number,
-  ): Promise<
+  private async fetchConversationComments(prNumber: number): Promise<
     Array<{
       id: number;
       user: { login: string };

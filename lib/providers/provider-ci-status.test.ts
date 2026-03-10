@@ -197,21 +197,51 @@ describe("GitHubProvider.getPrCiStatus", () => {
     assert.strictEqual(ci.state, CiState.PASS);
   });
 
-  it("prefers merged PR CI over open PR CI when both are present", async () => {
+  it("prefers open PR CI over merged PR CI when both are present", async () => {
     const seenStates: string[] = [];
+    const seenCommands: string[] = [];
     const p = new GitHubProvider({
       repoPath: "/fake",
-      runCommand: rcFor({
-        checkRuns: {
-          check_runs: [
-            {
-              name: "merged-check",
-              status: "completed",
-              conclusion: "failure",
-            },
-          ],
-        },
-      }),
+      runCommand: (async (command: string[]) => {
+        const joined = command.join(" ");
+        seenCommands.push(joined);
+        if (joined.includes("open-sha") && joined.includes("check-runs")) {
+          return {
+            stdout: JSON.stringify({
+              check_runs: [
+                {
+                  name: "open-check",
+                  status: "completed",
+                  conclusion: "success",
+                },
+              ],
+            }),
+            stderr: "",
+            exitCode: 0,
+            code: 0,
+            signal: null,
+            killed: false,
+            termination: "exit",
+          } as any;
+        }
+        if (joined.includes("open-sha") && joined.includes("/status")) {
+          return {
+            stdout: JSON.stringify({ statuses: [] }),
+            stderr: "",
+            exitCode: 0,
+            code: 0,
+            signal: null,
+            killed: false,
+            termination: "exit",
+          } as any;
+        }
+        if (joined.includes("merged-sha")) {
+          throw new Error(
+            `merged sha should not be queried when open PR exists: ${joined}`,
+          );
+        }
+        throw new Error(`unexpected command: ${joined}`);
+      }) as RunCommand,
     });
 
     (p as any).findPrsForIssue = async (_issueId: number, state: string) => {
@@ -243,9 +273,50 @@ describe("GitHubProvider.getPrCiStatus", () => {
     };
 
     const ci = await p.getPrCiStatus(1);
+    assert.strictEqual(ci.state, CiState.PASS);
+    assert.deepStrictEqual(seenStates, ["open"]);
+    assert.ok(seenCommands.some((cmd) => cmd.includes("open-sha")));
+    assert.ok(seenCommands.every((cmd) => !cmd.includes("merged-sha")));
+  });
+
+  it("falls back to merged PR CI when no open PR exists", async () => {
+    const seenStates: string[] = [];
+    const p = new GitHubProvider({
+      repoPath: "/fake",
+      runCommand: rcFor({
+        checkRuns: {
+          check_runs: [
+            {
+              name: "merged-check",
+              status: "completed",
+              conclusion: "failure",
+            },
+          ],
+        },
+      }),
+    });
+
+    (p as any).findPrsForIssue = async (_issueId: number, state: string) => {
+      seenStates.push(state);
+      if (state === "merged") {
+        return [
+          {
+            title: "merged",
+            body: "b",
+            number: 3,
+            url: "merged-url",
+            headRefOid: "merged-sha",
+            mergedAt: "2026-03-09T12:00:00Z",
+          },
+        ];
+      }
+      return [];
+    };
+
+    const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.FAIL);
     assert.ok(ci.failedChecks.includes("merged-check"));
-    assert.deepStrictEqual(seenStates, ["merged"]);
+    assert.deepStrictEqual(seenStates, ["open", "merged"]);
   });
 
   it("preserves unknown status when no open or merged PR exists", async () => {
@@ -259,7 +330,7 @@ describe("GitHubProvider.getPrCiStatus", () => {
 
     const ci = await p.getPrCiStatus(1);
     assert.strictEqual(ci.state, CiState.UNKNOWN);
-    assert.strictEqual(ci.summary, "No open PR found for CI status");
-    assert.deepStrictEqual(seenStates, ["merged", "open"]);
+    assert.strictEqual(ci.summary, "No open or merged PR found for CI status");
+    assert.deepStrictEqual(seenStates, ["open", "merged"]);
   });
 });
