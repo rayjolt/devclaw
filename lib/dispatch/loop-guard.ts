@@ -31,11 +31,13 @@ type AuditEntry = {
   ts?: string;
   issue?: number;
   role?: string;
+  project?: string;
   labelTransition?: string;
 };
 
 async function countRecentDispatches(
   workspaceDir: string,
+  projectName: string,
   issueId: number,
   role: string,
   windowMs: number,
@@ -44,7 +46,7 @@ async function countRecentDispatches(
   try {
     const content = await readFile(auditPath, "utf-8");
     const cutoff = Date.now() - windowMs;
-    return content
+    const entries = content
       .split("\n")
       .filter(Boolean)
       .map((line) => {
@@ -55,11 +57,30 @@ async function countRecentDispatches(
         }
       })
       .filter((entry): entry is AuditEntry => !!entry)
-      .filter((entry) => entry.event === "dispatch")
-      .filter((entry) => entry.issue === issueId && entry.role === role)
       .filter((entry) => {
         const ts = entry.ts ? Date.parse(entry.ts) : NaN;
         return Number.isFinite(ts) && ts >= cutoff;
+      })
+      .filter(
+        (entry) =>
+          entry.project === projectName &&
+          entry.issue === issueId &&
+          entry.role === role,
+      );
+
+    const lastQuarantineTs = entries
+      .filter((entry) => entry.event === "dispatch_loop_quarantined")
+      .reduce<number>((latest, entry) => {
+        const ts = entry.ts ? Date.parse(entry.ts) : NaN;
+        return Number.isFinite(ts) ? Math.max(latest, ts) : latest;
+      }, Number.NEGATIVE_INFINITY);
+
+    return entries
+      .filter((entry) => entry.event === "dispatch")
+      .filter((entry) => {
+        if (!Number.isFinite(lastQuarantineTs)) return true;
+        const ts = entry.ts ? Date.parse(entry.ts) : NaN;
+        return Number.isFinite(ts) && ts > lastQuarantineTs;
       }).length;
   } catch {
     return 0;
@@ -114,6 +135,7 @@ export async function guardDispatchLoop(opts: {
 
   const recentDispatches = await countRecentDispatches(
     workspaceDir,
+    projectName,
     issueId,
     role,
     windowMs,
