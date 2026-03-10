@@ -79,23 +79,22 @@ export async function countRecentDispatchesSinceLastQuarantine(opts: {
       entry.role === role,
   );
 
-  let lastQuarantineIndex = -1;
-  for (let index = 0; index < entries.length; index += 1) {
-    if (entries[index]?.event === "dispatch_loop_quarantined") {
-      lastQuarantineIndex = index;
+  let lastQuarantineTime: number | null = null;
+  for (const entry of entries) {
+    if (entry.event !== "dispatch_loop_quarantined") continue;
+    const time = getEntryTime(entry);
+    if (time === null) continue;
+    if (lastQuarantineTime === null || time > lastQuarantineTime) {
+      lastQuarantineTime = time;
     }
   }
 
   let dispatchCount = 0;
-  for (
-    let index = lastQuarantineIndex + 1;
-    index < entries.length;
-    index += 1
-  ) {
-    const entry = entries[index];
+  for (const entry of entries) {
     if (entry.event !== "dispatch") continue;
     const time = getEntryTime(entry);
     if (time === null || time < cutoff) continue;
+    if (lastQuarantineTime !== null && time <= lastQuarantineTime) continue;
     dispatchCount += 1;
   }
 

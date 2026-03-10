@@ -56,7 +56,7 @@ describe("guardDispatchLoop", () => {
         auditPath,
         [
           {
-            ts: "2026-03-10T12:05:00.000Z",
+            ts: "2026-03-10T12:01:00.000Z",
             event: "dispatch",
             project: h.project.name,
             issue: 96,
@@ -67,7 +67,7 @@ describe("guardDispatchLoop", () => {
             labelTransition: "To Do → Doing",
           },
           {
-            ts: "2026-03-10T12:06:00.000Z",
+            ts: "2026-03-10T12:02:00.000Z",
             event: "dispatch",
             project: h.project.name,
             issue: 96,
@@ -78,7 +78,7 @@ describe("guardDispatchLoop", () => {
             labelTransition: "To Do → Doing",
           },
           {
-            ts: "2026-03-10T12:07:00.000Z",
+            ts: "2026-03-10T12:03:00.000Z",
             event: "dispatch",
             project: h.project.name,
             issue: 96,
@@ -104,7 +104,7 @@ describe("guardDispatchLoop", () => {
           role: "developer",
           fromLabel: "To Do",
           quarantineLabel: "Refining",
-          now,
+          now: Date.parse("2026-03-10T12:04:00.000Z"),
         }),
       );
 
@@ -166,7 +166,7 @@ describe("guardDispatchLoop", () => {
     }
   });
 
-  it("counts only dispatches after the most recent quarantine event", async () => {
+  it("counts only dispatches after the most recent quarantine timestamp", async () => {
     const h = await createTestHarness();
 
     try {
@@ -202,6 +202,67 @@ describe("guardDispatchLoop", () => {
           {
             ts: "2026-03-10T11:54:00.000Z",
             event: "dispatch_loop_quarantined",
+            project: h.project.name,
+            issue: 96,
+            role: "developer",
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+        "utf-8",
+      );
+
+      const recentDispatches = await countRecentDispatchesSinceLastQuarantine({
+        workspaceDir: h.workspaceDir,
+        projectName: h.project.name,
+        issueId: 96,
+        role: "developer",
+        now,
+        windowMs: 10 * 60 * 1000,
+      });
+
+      assert.equal(recentDispatches, 3);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("ignores dispatches that happened before a later quarantine even if the log lines are out of order", async () => {
+    const h = await createTestHarness();
+
+    try {
+      const auditDir = join(h.workspaceDir, DATA_DIR, "log");
+      const auditPath = join(auditDir, "audit.log");
+      const now = Date.parse("2026-03-10T12:00:00.000Z");
+
+      await mkdir(auditDir, { recursive: true });
+      await writeFile(
+        auditPath,
+        [
+          {
+            ts: "2026-03-10T11:57:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:58:00.000Z",
+            event: "dispatch",
+            project: h.project.name,
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:59:00.000Z",
+            event: "dispatch_loop_quarantined",
+            project: h.project.name,
+            issue: 96,
+            role: "developer",
+          },
+          {
+            ts: "2026-03-10T11:56:00.000Z",
+            event: "dispatch",
             project: h.project.name,
             issue: 96,
             role: "developer",
