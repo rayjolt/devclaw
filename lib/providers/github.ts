@@ -35,12 +35,18 @@ const GH_REPO_SCOPED_COMMANDS = new Set(["issue", "pr", "label", "repo"]);
 
 function toIssue(gh: GhIssue): Issue {
   return {
-    iid: gh.number, title: gh.title, description: gh.body ?? "",
-    labels: gh.labels.map((l) => l.name), state: gh.state, web_url: gh.url,
+    iid: gh.number,
+    title: gh.title,
+    description: gh.body ?? "",
+    labels: gh.labels.map((l) => l.name),
+    state: gh.state,
+    web_url: gh.url,
   };
 }
 
-function parseGitHubRepo(remote?: string): { owner: string; name: string } | null {
+function parseGitHubRepo(
+  remote?: string,
+): { owner: string; name: string } | null {
   const value = remote?.trim();
   if (!value) return null;
 
@@ -71,7 +77,12 @@ export class GitHubProvider implements IssueProvider {
   private runCommand: RunCommand;
   private repoRemote?: string;
 
-  constructor(opts: { repoPath: string; repoRemote?: string; runCommand: RunCommand; workflow?: WorkflowConfig }) {
+  constructor(opts: {
+    repoPath: string;
+    repoRemote?: string;
+    runCommand: RunCommand;
+    workflow?: WorkflowConfig;
+  }) {
     this.repoPath = opts.repoPath;
     this.repoRemote = opts.repoRemote;
     this.runCommand = opts.runCommand;
@@ -81,9 +92,15 @@ export class GitHubProvider implements IssueProvider {
   private async gh(args: string[]): Promise<string> {
     return withResilience(async () => {
       const command = await this.buildGhArgs(args);
-      const result = await this.runCommand(["gh", ...command], { timeoutMs: 30_000, cwd: this.repoPath });
+      const result = await this.runCommand(["gh", ...command], {
+        timeoutMs: 30_000,
+        cwd: this.repoPath,
+      });
       if (result.code != null && result.code !== 0) {
-        throw new Error(result.stderr?.trim() || `gh command failed with exit code ${result.code}`);
+        throw new Error(
+          result.stderr?.trim() ||
+            `gh command failed with exit code ${result.code}`,
+        );
       }
       return result.stdout.trim();
     });
@@ -111,7 +128,8 @@ export class GitHubProvider implements IssueProvider {
   }
 
   /** Cached repo owner/name for GraphQL queries. */
-  private repoInfo: { owner: string; name: string } | null | undefined = undefined;
+  private repoInfo: { owner: string; name: string } | null | undefined =
+    undefined;
 
   /**
    * Get repo owner and name via gh CLI. Cached per instance.
@@ -144,7 +162,18 @@ export class GitHubProvider implements IssueProvider {
   private async findPrsViaTimeline(
     issueId: number,
     state: "open" | "merged" | "all",
-  ): Promise<Array<{ number: number; title: string; body: string; headRefName: string; headRefOid: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> | null> {
+  ): Promise<Array<{
+    number: number;
+    title: string;
+    body: string;
+    headRefName: string;
+    headRefOid: string;
+    url: string;
+    mergedAt: string | null;
+    reviewDecision: string | null;
+    state: string;
+    mergeable: string | null;
+  }> | null> {
     const repo = await this.getRepoInfo();
     if (!repo) return null;
 
@@ -173,7 +202,18 @@ export class GitHubProvider implements IssueProvider {
 
       // Extract PR data from both event types
       const seen = new Set<number>();
-      const prs: Array<{ number: number; title: string; body: string; headRefName: string; headRefOid: string; url: string; mergedAt: string | null; reviewDecision: string | null; state: string; mergeable: string | null }> = [];
+      const prs: Array<{
+        number: number;
+        title: string;
+        body: string;
+        headRefName: string;
+        headRefOid: string;
+        url: string;
+        mergedAt: string | null;
+        reviewDecision: string | null;
+        state: string;
+        mergeable: string | null;
+      }> = [];
 
       for (const node of nodes) {
         const pr = node.subject ?? node.source;
@@ -216,7 +256,9 @@ export class GitHubProvider implements IssueProvider {
    * 2. The fallback path (gh pr list) provides ALL requested fields via the fields parameter.
    * If a caller requests a field the timeline API doesn't provide, the fallback ensures it.
    */
-  private async findPrsForIssue<T extends { title: string; body: string; headRefName?: string }>(
+  private async findPrsForIssue<
+    T extends { title: string; body: string; headRefName?: string },
+  >(
     issueId: number,
     state: "open" | "merged" | "all",
     fields: string,
@@ -236,20 +278,35 @@ export class GitHubProvider implements IssueProvider {
       const raw = await this.gh(args);
       if (!raw) return [];
       const prs = JSON.parse(raw) as T[];
-      const branchPat = new RegExp(`^(?:fix|feat|feature|chore|bugfix|hotfix|refactor|docs|test)/${issueId}-`);
+      const branchPat = new RegExp(
+        `^(?:fix|feat|feature|chore|bugfix|hotfix|refactor|docs|test)/${issueId}-`,
+      );
       const titlePat = new RegExp(`#${issueId}\\b`);
 
       // Primary: match by branch name
-      const byBranch = prs.filter((pr) => pr.headRefName && branchPat.test(pr.headRefName));
+      const byBranch = prs.filter(
+        (pr) => pr.headRefName && branchPat.test(pr.headRefName),
+      );
       if (byBranch.length > 0) return byBranch;
 
       // Fallback: word-boundary match in title/body
-      return prs.filter((pr) => titlePat.test(pr.title) || titlePat.test(pr.body ?? ""));
-    } catch { return []; }
+      return prs.filter(
+        (pr) => titlePat.test(pr.title) || titlePat.test(pr.body ?? ""),
+      );
+    } catch {
+      return [];
+    }
   }
 
   async ensureLabel(name: string, color: string): Promise<void> {
-    await this.gh(["label", "create", name, "--color", color.replace(/^#/, ""), "--force"]);
+    await this.gh([
+      "label",
+      "create",
+      name,
+      "--color",
+      color.replace(/^#/, ""),
+      "--force",
+    ]);
   }
 
   async ensureAllStateLabels(): Promise<void> {
@@ -260,8 +317,22 @@ export class GitHubProvider implements IssueProvider {
     }
   }
 
-  async createIssue(title: string, description: string, label: StateLabel, assignees?: string[]): Promise<Issue> {
-    const args = ["issue", "create", "--title", title, "--body", description, "--label", label];
+  async createIssue(
+    title: string,
+    description: string,
+    label: StateLabel,
+    assignees?: string[],
+  ): Promise<Issue> {
+    const args = [
+      "issue",
+      "create",
+      "--title",
+      title,
+      "--body",
+      description,
+      "--label",
+      label,
+    ];
     if (assignees?.length) args.push("--assignee", assignees.join(","));
     const url = await this.gh(args);
     const match = url.match(/\/issues\/(\d+)$/);
@@ -271,28 +342,60 @@ export class GitHubProvider implements IssueProvider {
 
   async listIssuesByLabel(label: StateLabel): Promise<Issue[]> {
     try {
-      const raw = await this.gh(["issue", "list", "--label", label, "--state", "open", "--json", "number,title,body,labels,state,url"]);
+      const raw = await this.gh([
+        "issue",
+        "list",
+        "--label",
+        label,
+        "--state",
+        "open",
+        "--json",
+        "number,title,body,labels,state,url",
+      ]);
       return (JSON.parse(raw) as GhIssue[]).map(toIssue);
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
-  async listIssues(opts?: { label?: string; state?: "open" | "closed" | "all" }): Promise<Issue[]> {
+  async listIssues(opts?: {
+    label?: string;
+    state?: "open" | "closed" | "all";
+  }): Promise<Issue[]> {
     try {
-      const args = ["issue", "list", "--state", opts?.state ?? "open", "--json", "number,title,body,labels,state,url"];
+      const args = [
+        "issue",
+        "list",
+        "--state",
+        opts?.state ?? "open",
+        "--json",
+        "number,title,body,labels,state,url",
+      ];
       if (opts?.label) args.push("--label", opts.label);
       const raw = await this.gh(args);
       return (JSON.parse(raw) as GhIssue[]).map(toIssue);
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   async getIssue(issueId: number): Promise<Issue> {
-    const raw = await this.gh(["issue", "view", String(issueId), "--json", "number,title,body,labels,state,url"]);
+    const raw = await this.gh([
+      "issue",
+      "view",
+      String(issueId),
+      "--json",
+      "number,title,body,labels,state,url",
+    ]);
     return toIssue(JSON.parse(raw) as GhIssue);
   }
 
   async getIssueDependencies(issueId: number): Promise<IssueDependencies> {
     const repo = await this.getRepoInfo();
-    if (!repo) throw new Error("Unable to resolve repository owner/name for dependency query");
+    if (!repo)
+      throw new Error(
+        "Unable to resolve repository owner/name for dependency query",
+      );
 
     const query = `{
       repository(owner: "${repo.owner}", name: "${repo.name}") {
@@ -310,7 +413,10 @@ export class GitHubProvider implements IssueProvider {
     const raw = await this.gh(["api", "graphql", "-f", `query=${query}`]);
     const data = JSON.parse(raw);
     const issue = data?.data?.repository?.issue;
-    if (!issue) throw new Error(`Issue #${issueId} not found in repository ${repo.owner}/${repo.name}`);
+    if (!issue)
+      throw new Error(
+        `Issue #${issueId} not found in repository ${repo.owner}/${repo.name}`,
+      );
 
     const blockers = (issue.blockedBy?.nodes ?? []).map((dep: any) => ({
       iid: dep.number,
@@ -335,31 +441,49 @@ export class GitHubProvider implements IssueProvider {
 
   async listComments(issueId: number): Promise<IssueComment[]> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${issueId}/comments`, "--paginate", "--jq", ".[] | {id: .id, author: .user.login, body: .body, created_at: .created_at}"]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/${issueId}/comments`,
+        "--paginate",
+        "--jq",
+        ".[] | {id: .id, author: .user.login, body: .body, created_at: .created_at}",
+      ]);
       if (!raw) return [];
-      const comments = raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as IssueComment);
+      const comments = raw
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as IssueComment);
       comments.sort((a, b) => {
-        const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        const timeDiff =
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         return timeDiff !== 0 ? timeDiff : a.id - b.id;
       });
       return comments;
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
-  async transitionLabel(issueId: number, from: StateLabel, to: StateLabel): Promise<void> {
+  async transitionLabel(
+    issueId: number,
+    from: StateLabel,
+    to: StateLabel,
+  ): Promise<void> {
     // Two-phase transition to ensure atomicity and recoverability:
     // Phase 1: Add new label first (safer than removing first)
     // Phase 2: Remove old state labels
     // This way, if phase 2 fails, the issue still has the new label (issue is correctly transitioned)
     // instead of having no state label at all.
-    
+
     await this.gh(["issue", "edit", String(issueId), "--add-label", to]);
-    
+
     // Remove old state labels (best-effort if there are multiple old labels)
     const issue = await this.getIssue(issueId);
     const stateLabels = getStateLabels(this.workflow);
-    const currentStateLabels = issue.labels.filter((l) => stateLabels.includes(l) && l !== to);
-    
+    const currentStateLabels = issue.labels.filter(
+      (l) => stateLabels.includes(l) && l !== to,
+    );
+
     if (currentStateLabels.length > 0) {
       const args = ["issue", "edit", String(issueId)];
       for (const l of currentStateLabels) args.push("--remove-label", l);
@@ -369,13 +493,15 @@ export class GitHubProvider implements IssueProvider {
     // Post-transition validation: verify exactly one state label remains (#473)
     try {
       const postIssue = await this.getIssue(issueId);
-      const postStateLabels = postIssue.labels.filter((l) => stateLabels.includes(l));
+      const postStateLabels = postIssue.labels.filter((l) =>
+        stateLabels.includes(l),
+      );
       if (postStateLabels.length !== 1 || !postStateLabels.includes(to)) {
         // Log anomaly but don't throw — transition is already committed
         console.error(
           `[state_transition_anomaly] Issue #${issueId}: expected state "${to}", ` +
-          `found ${postStateLabels.length} state label(s): [${postStateLabels.join(", ")}]. ` +
-          `Transition: "${from}" → "${to}". See #473.`,
+            `found ${postStateLabels.length} state label(s): [${postStateLabels.join(", ")}]. ` +
+            `Transition: "${from}" → "${to}". See #473.`,
         );
       }
     } catch {
@@ -394,21 +520,49 @@ export class GitHubProvider implements IssueProvider {
     await this.gh(args);
   }
 
-  async closeIssue(issueId: number): Promise<void> { await this.gh(["issue", "close", String(issueId)]); }
-  async reopenIssue(issueId: number): Promise<void> { await this.gh(["issue", "reopen", String(issueId)]); }
+  async closeIssue(issueId: number): Promise<void> {
+    await this.gh(["issue", "close", String(issueId)]);
+  }
+  async reopenIssue(issueId: number): Promise<void> {
+    await this.gh(["issue", "reopen", String(issueId)]);
+  }
 
   async getMergedMRUrl(issueId: number): Promise<string | null> {
-    type MergedPr = { title: string; body: string; headRefName: string; url: string; mergedAt: string };
-    const prs = await this.findPrsForIssue<MergedPr>(issueId, "merged", "title,body,headRefName,url,mergedAt");
+    type MergedPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      url: string;
+      mergedAt: string;
+    };
+    const prs = await this.findPrsForIssue<MergedPr>(
+      issueId,
+      "merged",
+      "title,body,headRefName,url,mergedAt",
+    );
     if (prs.length === 0) return null;
-    prs.sort((a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime());
+    prs.sort(
+      (a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime(),
+    );
     return prs[0].url;
   }
 
   async getPrStatus(issueId: number): Promise<PrStatus> {
     // Check open PRs first — include mergeable for conflict detection
-    type OpenPr = { title: string; body: string; headRefName: string; url: string; number: number; reviewDecision: string; mergeable: string };
-    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,url,number,reviewDecision,mergeable");
+    type OpenPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      url: string;
+      number: number;
+      reviewDecision: string;
+      mergeable: string;
+    };
+    const open = await this.findPrsForIssue<OpenPr>(
+      issueId,
+      "open",
+      "title,body,headRefName,url,number,reviewDecision,mergeable",
+    );
     if (open.length > 0) {
       const pr = open[0];
       let state: PrState;
@@ -418,12 +572,16 @@ export class GitHubProvider implements IssueProvider {
         state = PrState.CHANGES_REQUESTED;
       } else {
         // No branch protection → reviewDecision may be empty. Check individual reviews.
-        const hasChangesRequested = await this.hasChangesRequestedReview(pr.number);
+        const hasChangesRequested = await this.hasChangesRequestedReview(
+          pr.number,
+        );
         if (hasChangesRequested) {
           state = PrState.CHANGES_REQUESTED;
         } else {
           // Check for unacknowledged COMMENTED reviews (feedback without formal "Request changes")
-          const hasReviewFeedback = await this.hasUnacknowledgedReviews(pr.number);
+          const hasReviewFeedback = await this.hasUnacknowledgedReviews(
+            pr.number,
+          );
           if (hasReviewFeedback) {
             state = PrState.HAS_COMMENTS;
           } else {
@@ -435,38 +593,114 @@ export class GitHubProvider implements IssueProvider {
       }
 
       // Conflict detection: "CONFLICTING" means merge conflicts, "UNKNOWN" means still computing
-      const mergeable = pr.mergeable === "CONFLICTING" ? false
-        : pr.mergeable === "MERGEABLE" ? true
-        : undefined; // UNKNOWN or missing — don't assume
+      const mergeable =
+        pr.mergeable === "CONFLICTING"
+          ? false
+          : pr.mergeable === "MERGEABLE"
+            ? true
+            : undefined; // UNKNOWN or missing — don't assume
 
-      return { state, url: pr.url, title: pr.title, sourceBranch: pr.headRefName, mergeable };
+      return {
+        state,
+        url: pr.url,
+        title: pr.title,
+        sourceBranch: pr.headRefName,
+        mergeable,
+      };
     }
     // Check merged PRs — also fetch reviewDecision to detect approved-then-merged vs self-merged.
-    type MergedPr = { title: string; body: string; headRefName: string; url: string; reviewDecision: string | null };
-    const merged = await this.findPrsForIssue<MergedPr>(issueId, "merged", "title,body,headRefName,url,reviewDecision");
+    type MergedPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      url: string;
+      reviewDecision: string | null;
+    };
+    const merged = await this.findPrsForIssue<MergedPr>(
+      issueId,
+      "merged",
+      "title,body,headRefName,url,reviewDecision",
+    );
     if (merged.length > 0) {
       const pr = merged[0];
-      const state = pr.reviewDecision === "APPROVED" ? PrState.APPROVED : PrState.MERGED;
-      return { state, url: pr.url, title: pr.title, sourceBranch: pr.headRefName };
+      const state =
+        pr.reviewDecision === "APPROVED" ? PrState.APPROVED : PrState.MERGED;
+      return {
+        state,
+        url: pr.url,
+        title: pr.title,
+        sourceBranch: pr.headRefName,
+      };
     }
     // Check for closed-without-merge PRs. url: non-null = PR was explicitly closed;
     // url: null = no PR has ever been created for this issue.
     const allPrs = await this.findPrsViaTimeline(issueId, "all");
     const closedPr = allPrs?.find((pr) => pr.state === "CLOSED");
     if (closedPr) {
-      return { state: PrState.CLOSED, url: closedPr.url, title: closedPr.title, sourceBranch: closedPr.headRefName };
+      return {
+        state: PrState.CLOSED,
+        url: closedPr.url,
+        title: closedPr.title,
+        sourceBranch: closedPr.headRefName,
+      };
     }
     return { state: PrState.CLOSED, url: null };
   }
 
   async getPrCiStatus(issueId: number): Promise<CiStatus> {
-    type OpenPr = { title: string; body: string; number: number; url: string; headRefOid: string };
-    const open = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
-    if (open.length === 0) {
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No open PR found for CI status" };
+    type CiPr = {
+      title: string;
+      body: string;
+      number: number;
+      url: string;
+      headRefOid: string;
+      mergedAt?: string | null;
+    };
+    const getCiPrs = async (state: "open" | "merged"): Promise<CiPr[]> => {
+      const prs = await this.findPrsForIssue<CiPr>(
+        issueId,
+        state,
+        state === "merged"
+          ? "title,body,number,url,headRefOid,mergedAt"
+          : "title,body,number,url,headRefOid",
+      );
+      if (state === "merged" && prs.length > 1) {
+        prs.sort(
+          (a, b) =>
+            new Date(b.mergedAt ?? 0).getTime() -
+            new Date(a.mergedAt ?? 0).getTime(),
+        );
+      }
+      return prs;
+    };
+    const resolvePrForCi = async (): Promise<{
+      pr: CiPr;
+      state: "open" | "merged";
+    } | null> => {
+      const open = await getCiPrs("open");
+      if (open.length > 0) {
+        return { pr: open[0], state: "open" };
+      }
+
+      const merged = await getCiPrs("merged");
+      if (merged.length > 0) {
+        return { pr: merged[0], state: "merged" };
+      }
+
+      return null;
+    };
+
+    const prStatus = await resolvePrForCi();
+    if (!prStatus) {
+      return {
+        state: CiState.UNKNOWN,
+        failedChecks: [],
+        pendingChecks: [],
+        summary: "No open or merged PR found for CI status",
+      };
     }
 
-    const pr = open[0];
+    const { pr, state: prState } = prStatus;
     const maxShaAttempts = 3;
     let sha = pr.headRefOid;
     let sawTransientMissingSha = false;
@@ -474,19 +708,30 @@ export class GitHubProvider implements IssueProvider {
     for (let attempt = 1; !sha && attempt <= maxShaAttempts; attempt++) {
       sawTransientMissingSha = true;
       if (attempt > 1) {
-        await new Promise((resolve) => setTimeout(resolve, 120 * (2 ** (attempt - 2))));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 120 * 2 ** (attempt - 2)),
+        );
       }
-      const refreshed = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,number,url,headRefOid");
+      const refreshed = await getCiPrs(prState);
       sha = refreshed[0]?.headRefOid ?? "";
     }
 
     if (!sha) {
-      console.warn(`[github] CI status: persistent missing PR head SHA for issue #${issueId} after ${maxShaAttempts} retries`);
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "PR head SHA unavailable" };
+      console.warn(
+        `[github] CI status: persistent missing PR head SHA for issue #${issueId} after ${maxShaAttempts} retries`,
+      );
+      return {
+        state: CiState.UNKNOWN,
+        failedChecks: [],
+        pendingChecks: [],
+        summary: "PR head SHA unavailable",
+      };
     }
 
     if (sawTransientMissingSha) {
-      console.info(`[github] CI status: recovered transient missing PR head SHA for issue #${issueId}`);
+      console.info(
+        `[github] CI status: recovered transient missing PR head SHA for issue #${issueId}`,
+      );
     }
 
     const failedChecks: string[] = [];
@@ -495,8 +740,17 @@ export class GitHubProvider implements IssueProvider {
 
     // GitHub check-runs API
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/commits/${sha}/check-runs`]);
-      const data = JSON.parse(raw) as { check_runs?: Array<{ name: string; status: string; conclusion: string | null }> };
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/commits/${sha}/check-runs`,
+      ]);
+      const data = JSON.parse(raw) as {
+        check_runs?: Array<{
+          name: string;
+          status: string;
+          conclusion: string | null;
+        }>;
+      };
       for (const run of data.check_runs ?? []) {
         observedChecks++;
         if (run.status !== "completed") {
@@ -505,38 +759,71 @@ export class GitHubProvider implements IssueProvider {
         }
         const conclusion = (run.conclusion ?? "").toLowerCase();
         if (["neutral", "skipped", "success"].includes(conclusion)) continue;
-        if (["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"].includes(conclusion)) {
+        if (
+          [
+            "failure",
+            "timed_out",
+            "cancelled",
+            "action_required",
+            "startup_failure",
+            "stale",
+          ].includes(conclusion)
+        ) {
           failedChecks.push(run.name);
         }
       }
     } catch {
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "Failed to query GitHub check-runs API" };
+      return {
+        state: CiState.UNKNOWN,
+        failedChecks: [],
+        pendingChecks: [],
+        summary: "Failed to query GitHub check-runs API",
+      };
     }
 
     // Legacy commit status contexts API
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/commits/${sha}/status`]);
-      const data = JSON.parse(raw) as { statuses?: Array<{ context: string; state: string }> };
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/commits/${sha}/status`,
+      ]);
+      const data = JSON.parse(raw) as {
+        statuses?: Array<{ context: string; state: string }>;
+      };
       for (const status of data.statuses ?? []) {
         observedChecks++;
         const state = status.state?.toLowerCase();
         if (state === "pending") pendingChecks.push(status.context);
-        else if (state === "failure" || state === "error") failedChecks.push(status.context);
+        else if (state === "failure" || state === "error")
+          failedChecks.push(status.context);
       }
     } catch {
       // best-effort; check-runs already queried
     }
 
     if (failedChecks.length > 0) {
-      return { state: CiState.FAIL, failedChecks: [...new Set(failedChecks)], pendingChecks: [...new Set(pendingChecks)] };
+      return {
+        state: CiState.FAIL,
+        failedChecks: [...new Set(failedChecks)],
+        pendingChecks: [...new Set(pendingChecks)],
+      };
     }
     if (pendingChecks.length > 0) {
-      return { state: CiState.PENDING, failedChecks: [], pendingChecks: [...new Set(pendingChecks)] };
+      return {
+        state: CiState.PENDING,
+        failedChecks: [],
+        pendingChecks: [...new Set(pendingChecks)],
+      };
     }
 
     // If no checks were reported at all, treat as unknown (fail-closed policy).
     if (observedChecks === 0) {
-      return { state: CiState.UNKNOWN, failedChecks: [], pendingChecks: [], summary: "No CI checks reported for PR" };
+      return {
+        state: CiState.UNKNOWN,
+        failedChecks: [],
+        pendingChecks: [],
+        summary: "No CI checks reported for PR",
+      };
     }
 
     return { state: CiState.PASS, failedChecks: [], pendingChecks: [] };
@@ -548,10 +835,16 @@ export class GitHubProvider implements IssueProvider {
    */
   private async hasChangesRequestedReview(prNumber: number): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/pulls/${prNumber}/reviews`, "--jq",
-        "[.[] | select(.state == \"CHANGES_REQUESTED\" or .state == \"APPROVED\") | {user: .user.login, state}] | group_by(.user) | map(sort_by(.state) | last) | .[] | select(.state == \"CHANGES_REQUESTED\") | .user"]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/pulls/${prNumber}/reviews`,
+        "--jq",
+        '[.[] | select(.state == "CHANGES_REQUESTED" or .state == "APPROVED") | {user: .user.login, state}] | group_by(.user) | map(sort_by(.state) | last) | .[] | select(.state == "CHANGES_REQUESTED") | .user',
+      ]);
       return raw.trim().length > 0;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -565,14 +858,22 @@ export class GitHubProvider implements IssueProvider {
    */
   private async hasUnacknowledgedReviews(prNumber: number): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/pulls/${prNumber}/reviews`]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/pulls/${prNumber}/reviews`,
+      ]);
       const reviews = JSON.parse(raw) as Array<{
-        id: number; user: { login: string }; body: string; state: string;
+        id: number;
+        user: { login: string };
+        body: string;
+        state: string;
       }>;
 
       // Filter to COMMENTED reviews with non-empty body from non-bot users
       const commentedReviews = reviews.filter(
-        (r) => r.state === "COMMENTED" && r.body?.trim().length > 0 &&
+        (r) =>
+          r.state === "COMMENTED" &&
+          r.body?.trim().length > 0 &&
           !r.user.login.endsWith("[bot]"),
       );
 
@@ -582,9 +883,12 @@ export class GitHubProvider implements IssueProvider {
       for (const review of commentedReviews) {
         try {
           const reactionsRaw = await this.gh([
-            "api", `repos/:owner/:repo/pulls/${prNumber}/reviews/${review.id}/reactions`,
+            "api",
+            `repos/:owner/:repo/pulls/${prNumber}/reviews/${review.id}/reactions`,
           ]);
-          const reactions = JSON.parse(reactionsRaw) as Array<{ content: string }>;
+          const reactions = JSON.parse(reactionsRaw) as Array<{
+            content: string;
+          }>;
           const hasEyes = reactions.some((r) => r.content === "eyes");
           if (!hasEyes) return true; // Found unacknowledged review
         } catch {
@@ -594,7 +898,9 @@ export class GitHubProvider implements IssueProvider {
       }
 
       return false;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -604,12 +910,24 @@ export class GitHubProvider implements IssueProvider {
    */
   private async hasConversationComments(prNumber: number): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${prNumber}/comments`]);
-      const comments = JSON.parse(raw) as Array<{ user: { login: string }; body: string; reactions: { eyes: number } }>;
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/${prNumber}/comments`,
+      ]);
+      const comments = JSON.parse(raw) as Array<{
+        user: { login: string };
+        body: string;
+        reactions: { eyes: number };
+      }>;
       return comments.some(
-        (c) => !c.user.login.endsWith("[bot]") && c.body.trim().length > 0 && !(c.reactions?.eyes > 0),
+        (c) =>
+          !c.user.login.endsWith("[bot]") &&
+          c.body.trim().length > 0 &&
+          !(c.reactions?.eyes > 0),
       );
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -617,46 +935,98 @@ export class GitHubProvider implements IssueProvider {
    * These are comments on the PR timeline (not inline review comments).
    * Excludes only bot accounts and empty bodies.
    */
-  private async fetchConversationComments(
-    prNumber: number,
-  ): Promise<Array<{ id: number; user: { login: string }; body: string; created_at: string }>> {
+  private async fetchConversationComments(prNumber: number): Promise<
+    Array<{
+      id: number;
+      user: { login: string };
+      body: string;
+      created_at: string;
+    }>
+  > {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${prNumber}/comments`]);
-      const all = JSON.parse(raw) as Array<{ id: number; user: { login: string }; body: string; created_at: string }>;
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/${prNumber}/comments`,
+      ]);
+      const all = JSON.parse(raw) as Array<{
+        id: number;
+        user: { login: string };
+        body: string;
+        created_at: string;
+      }>;
       return all.filter(
         (c) => !c.user.login.endsWith("[bot]") && c.body.trim().length > 0,
       );
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   async mergePr(issueId: number): Promise<void> {
-    type OpenPr = { title: string; body: string; headRefName: string; url: string };
-    const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,url");
-    if (prs.length === 0) throw new Error(`No open PR found for issue #${issueId}`);
+    type OpenPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      url: string;
+    };
+    const prs = await this.findPrsForIssue<OpenPr>(
+      issueId,
+      "open",
+      "title,body,headRefName,url",
+    );
+    if (prs.length === 0)
+      throw new Error(`No open PR found for issue #${issueId}`);
     await this.gh(["pr", "merge", prs[0].url, "--merge"]);
   }
 
   async getPrDiff(issueId: number): Promise<string | null> {
-    type OpenPr = { title: string; body: string; headRefName: string; number: number };
-    const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+    type OpenPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      number: number;
+    };
+    const prs = await this.findPrsForIssue<OpenPr>(
+      issueId,
+      "open",
+      "title,body,headRefName,number",
+    );
     if (prs.length === 0) return null;
     try {
       return await this.gh(["pr", "diff", String(prs[0].number)]);
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   async getPrReviewComments(issueId: number): Promise<PrReviewComment[]> {
-    type OpenPr = { title: string; body: string; headRefName: string; number: number };
-    const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+    type OpenPr = {
+      title: string;
+      body: string;
+      headRefName: string;
+      number: number;
+    };
+    const prs = await this.findPrsForIssue<OpenPr>(
+      issueId,
+      "open",
+      "title,body,headRefName,number",
+    );
     if (prs.length === 0) return [];
     const prNumber = prs[0].number;
     const comments: PrReviewComment[] = [];
 
     try {
       // Review-level comments (top-level reviews: APPROVED, CHANGES_REQUESTED, COMMENTED)
-      const reviewsRaw = await this.gh(["api", `repos/:owner/:repo/pulls/${prNumber}/reviews`]);
+      const reviewsRaw = await this.gh([
+        "api",
+        `repos/:owner/:repo/pulls/${prNumber}/reviews`,
+      ]);
       const reviews = JSON.parse(reviewsRaw) as Array<{
-        id: number; user: { login: string }; body: string; state: string; submitted_at: string;
+        id: number;
+        user: { login: string };
+        body: string;
+        state: string;
+        submitted_at: string;
       }>;
       for (const r of reviews) {
         if (r.state === "DISMISSED") continue; // Skip dismissed
@@ -669,13 +1039,23 @@ export class GitHubProvider implements IssueProvider {
           created_at: r.submitted_at,
         });
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     try {
       // Inline (file-level) review comments
-      const inlineRaw = await this.gh(["api", `repos/:owner/:repo/pulls/${prNumber}/comments`]);
+      const inlineRaw = await this.gh([
+        "api",
+        `repos/:owner/:repo/pulls/${prNumber}/comments`,
+      ]);
       const inlines = JSON.parse(inlineRaw) as Array<{
-        id: number; user: { login: string }; body: string; path: string; line: number | null; created_at: string;
+        id: number;
+        user: { login: string };
+        body: string;
+        path: string;
+        line: number | null;
+        created_at: string;
       }>;
       for (const c of inlines) {
         comments.push({
@@ -688,7 +1068,9 @@ export class GitHubProvider implements IssueProvider {
           line: c.line ?? undefined,
         });
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     // Top-level conversation comments (regular PR comments via Issues API)
     const conversationComments = await this.fetchConversationComments(prNumber);
@@ -703,15 +1085,21 @@ export class GitHubProvider implements IssueProvider {
     }
 
     // Sort by date
-    comments.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    comments.sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
     return comments;
   }
 
   async addComment(issueId: number, body: string): Promise<number> {
     const raw = await this.gh([
-      "api", `repos/:owner/:repo/issues/${issueId}/comments`,
-      "--method", "POST",
-      "--field", `body=${body}`,
+      "api",
+      `repos/:owner/:repo/issues/${issueId}/comments`,
+      "--method",
+      "POST",
+      "--field",
+      `body=${body}`,
     ]);
     const parsed = JSON.parse(raw) as { id: number };
     return parsed.id;
@@ -720,54 +1108,101 @@ export class GitHubProvider implements IssueProvider {
   async reactToIssue(issueId: number, emoji: string): Promise<void> {
     try {
       await this.gh([
-        "api", `repos/:owner/:repo/issues/${issueId}/reactions`,
-        "--method", "POST",
-        "--field", `content=${emoji}`,
+        "api",
+        `repos/:owner/:repo/issues/${issueId}/reactions`,
+        "--method",
+        "POST",
+        "--field",
+        `content=${emoji}`,
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   async issueHasReaction(issueId: number, emoji: string): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${issueId}/reactions`]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/${issueId}/reactions`,
+      ]);
       const reactions = JSON.parse(raw) as Array<{ content: string }>;
       return reactions.some((r) => r.content === emoji);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   async reactToPr(issueId: number, emoji: string): Promise<void> {
     try {
       // GitHub PRs are also issues — use the same reactions API with the PR number
-      type OpenPr = { title: string; body: string; headRefName: string; number: number };
-      const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+      type OpenPr = {
+        title: string;
+        body: string;
+        headRefName: string;
+        number: number;
+      };
+      const prs = await this.findPrsForIssue<OpenPr>(
+        issueId,
+        "open",
+        "title,body,headRefName,number",
+      );
       if (prs.length === 0) return;
       await this.gh([
-        "api", `repos/:owner/:repo/issues/${prs[0].number}/reactions`,
-        "--method", "POST",
-        "--field", `content=${emoji}`,
+        "api",
+        `repos/:owner/:repo/issues/${prs[0].number}/reactions`,
+        "--method",
+        "POST",
+        "--field",
+        `content=${emoji}`,
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   async prHasReaction(issueId: number, emoji: string): Promise<boolean> {
     try {
-      type OpenPr = { title: string; body: string; headRefName: string; number: number };
-      const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+      type OpenPr = {
+        title: string;
+        body: string;
+        headRefName: string;
+        number: number;
+      };
+      const prs = await this.findPrsForIssue<OpenPr>(
+        issueId,
+        "open",
+        "title,body,headRefName,number",
+      );
       if (prs.length === 0) return false;
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/${prs[0].number}/reactions`]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/${prs[0].number}/reactions`,
+      ]);
       const reactions = JSON.parse(raw) as Array<{ content: string }>;
       return reactions.some((r) => r.content === emoji);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
-  async reactToIssueComment(_issueId: number, commentId: number, emoji: string): Promise<void> {
+  async reactToIssueComment(
+    _issueId: number,
+    commentId: number,
+    emoji: string,
+  ): Promise<void> {
     try {
       await this.gh([
-        "api", `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
-        "--method", "POST",
-        "--field", `content=${emoji}`,
+        "api",
+        `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
+        "--method",
+        "POST",
+        "--field",
+        `content=${emoji}`,
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
@@ -775,64 +1210,128 @@ export class GitHubProvider implements IssueProvider {
    * Uses the GitHub Issues Comments Reactions API (PRs share the issue comment namespace).
    * Best-effort — swallows all errors.
    */
-  async reactToPrComment(_issueId: number, commentId: number, emoji: string): Promise<void> {
+  async reactToPrComment(
+    _issueId: number,
+    commentId: number,
+    emoji: string,
+  ): Promise<void> {
     try {
       await this.gh([
-        "api", `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
-        "--method", "POST",
-        "--field", `content=${emoji}`,
+        "api",
+        `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
+        "--method",
+        "POST",
+        "--field",
+        `content=${emoji}`,
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   /**
    * Add an emoji reaction to a PR review by its review ID.
    * Uses the GitHub Pull Request Review Reactions API.
    */
-  async reactToPrReview(issueId: number, reviewId: number, emoji: string): Promise<void> {
+  async reactToPrReview(
+    issueId: number,
+    reviewId: number,
+    emoji: string,
+  ): Promise<void> {
     try {
       // We need the PR number, not the issue ID. Find the PR first.
-      type OpenPr = { title: string; body: string; headRefName: string; number: number };
-      const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+      type OpenPr = {
+        title: string;
+        body: string;
+        headRefName: string;
+        number: number;
+      };
+      const prs = await this.findPrsForIssue<OpenPr>(
+        issueId,
+        "open",
+        "title,body,headRefName,number",
+      );
       if (prs.length === 0) return;
       await this.gh([
-        "api", `repos/:owner/:repo/pulls/${prs[0].number}/reviews/${reviewId}/reactions`,
-        "--method", "POST",
-        "--field", `content=${emoji}`,
+        "api",
+        `repos/:owner/:repo/pulls/${prs[0].number}/reviews/${reviewId}/reactions`,
+        "--method",
+        "POST",
+        "--field",
+        `content=${emoji}`,
       ]);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
-  async issueCommentHasReaction(issueId: number, commentId: number, emoji: string): Promise<boolean> {
+  async issueCommentHasReaction(
+    issueId: number,
+    commentId: number,
+    emoji: string,
+  ): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/comments/${commentId}/reactions`]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
+      ]);
       const reactions = JSON.parse(raw) as Array<{ content: string }>;
       return reactions.some((r) => r.content === emoji);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
-  async prCommentHasReaction(issueId: number, commentId: number, emoji: string): Promise<boolean> {
+  async prCommentHasReaction(
+    issueId: number,
+    commentId: number,
+    emoji: string,
+  ): Promise<boolean> {
     try {
-      const raw = await this.gh(["api", `repos/:owner/:repo/issues/comments/${commentId}/reactions`]);
+      const raw = await this.gh([
+        "api",
+        `repos/:owner/:repo/issues/comments/${commentId}/reactions`,
+      ]);
       const reactions = JSON.parse(raw) as Array<{ content: string }>;
       return reactions.some((r) => r.content === emoji);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
-  async prReviewHasReaction(issueId: number, reviewId: number, emoji: string): Promise<boolean> {
+  async prReviewHasReaction(
+    issueId: number,
+    reviewId: number,
+    emoji: string,
+  ): Promise<boolean> {
     try {
-      type OpenPr = { title: string; body: string; headRefName: string; number: number };
-      const prs = await this.findPrsForIssue<OpenPr>(issueId, "open", "title,body,headRefName,number");
+      type OpenPr = {
+        title: string;
+        body: string;
+        headRefName: string;
+        number: number;
+      };
+      const prs = await this.findPrsForIssue<OpenPr>(
+        issueId,
+        "open",
+        "title,body,headRefName,number",
+      );
       if (prs.length === 0) return false;
       const raw = await this.gh([
-        "api", `repos/:owner/:repo/pulls/${prs[0].number}/reviews/${reviewId}/reactions`,
+        "api",
+        `repos/:owner/:repo/pulls/${prs[0].number}/reviews/${reviewId}/reactions`,
       ]);
       const reactions = JSON.parse(raw) as Array<{ content: string }>;
       return reactions.some((r) => r.content === emoji);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
-  async editIssue(issueId: number, updates: { title?: string; body?: string }): Promise<Issue> {
+  async editIssue(
+    issueId: number,
+    updates: { title?: string; body?: string },
+  ): Promise<Issue> {
     const args = ["issue", "edit", String(issueId)];
     if (updates.title !== undefined) args.push("--title", updates.title);
     if (updates.body !== undefined) args.push("--body", updates.body);
@@ -845,14 +1344,27 @@ export class GitHubProvider implements IssueProvider {
    * Searches the last 200 commits on baseBranch for commit messages mentioning #issueId.
    * Used as a fallback when no PR exists (e.g., direct commit to main).
    */
-  async isCommitOnBaseBranch(issueId: number, baseBranch: string): Promise<boolean> {
+  async isCommitOnBaseBranch(
+    issueId: number,
+    baseBranch: string,
+  ): Promise<boolean> {
     try {
       const result = await this.runCommand(
-        ["git", "log", `origin/${baseBranch}`, "--oneline", "-200", "--grep", `#${issueId}`],
+        [
+          "git",
+          "log",
+          `origin/${baseBranch}`,
+          "--oneline",
+          "-200",
+          "--grep",
+          `#${issueId}`,
+        ],
         { timeoutMs: 15_000, cwd: this.repoPath },
       );
       return result.stdout.trim().length > 0;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   async uploadAttachment(
@@ -872,34 +1384,55 @@ export class GitHubProvider implements IssueProvider {
       // Ensure branch exists
       let branchExists = false;
       try {
-        await this.gh(["api", `repos/${repo.owner}/${repo.name}/git/ref/heads/${branch}`]);
+        await this.gh([
+          "api",
+          `repos/${repo.owner}/${repo.name}/git/ref/heads/${branch}`,
+        ]);
         branchExists = true;
-      } catch { /* doesn't exist */ }
+      } catch {
+        /* doesn't exist */
+      }
 
       if (!branchExists) {
         const raw = await this.gh([
-          "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name",
+          "repo",
+          "view",
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
         ]);
         const defaultBranch = raw.trim();
         const shaRaw = await this.gh([
-          "api", `repos/${repo.owner}/${repo.name}/git/ref/heads/${defaultBranch}`,
-          "--jq", ".object.sha",
+          "api",
+          `repos/${repo.owner}/${repo.name}/git/ref/heads/${defaultBranch}`,
+          "--jq",
+          ".object.sha",
         ]);
         await this.gh([
-          "api", `repos/${repo.owner}/${repo.name}/git/refs`,
-          "--method", "POST",
-          "--field", `ref=refs/heads/${branch}`,
-          "--field", `sha=${shaRaw.trim()}`,
+          "api",
+          `repos/${repo.owner}/${repo.name}/git/refs`,
+          "--method",
+          "POST",
+          "--field",
+          `ref=refs/heads/${branch}`,
+          "--field",
+          `sha=${shaRaw.trim()}`,
         ]);
       }
 
       // Upload via Contents API
       await this.gh([
-        "api", `repos/${repo.owner}/${repo.name}/contents/${filePath}`,
-        "--method", "PUT",
-        "--field", `message=attachment: ${file.filename} for issue #${issueId}`,
-        "--field", `content=${base64Content}`,
-        "--field", `branch=${branch}`,
+        "api",
+        `repos/${repo.owner}/${repo.name}/contents/${filePath}`,
+        "--method",
+        "PUT",
+        "--field",
+        `message=attachment: ${file.filename} for issue #${issueId}`,
+        "--field",
+        `content=${base64Content}`,
+        "--field",
+        `branch=${branch}`,
       ]);
 
       return `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${filePath}`;
@@ -909,6 +1442,11 @@ export class GitHubProvider implements IssueProvider {
   }
 
   async healthCheck(): Promise<boolean> {
-    try { await this.gh(["auth", "status"]); return true; } catch { return false; }
+    try {
+      await this.gh(["auth", "status"]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
