@@ -12,25 +12,82 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolContext } from "../../types.js";
 import type { PluginContext, RunCommand } from "../../context.js";
-import { getRoleWorker, resolveRepoPath, findSlotByIssue } from "../../projects/index.js";
+import {
+  getRoleWorker,
+  resolveRepoPath,
+  findSlotByIssue,
+} from "../../projects/index.js";
 import { executeCompletion, getRule } from "../../services/pipeline.js";
 import { log as auditLog } from "../../audit.js";
 import { DATA_DIR } from "../../setup/migrate-layout.js";
-import { requireWorkspaceDir, resolveChannelId, resolveProject, resolveProvider } from "../helpers.js";
-import { getAllRoleIds, isValidResult, getCompletionResults } from "../../roles/index.js";
+import {
+  requireWorkspaceDir,
+  resolveChannelId,
+  resolveProject,
+  resolveProvider,
+} from "../helpers.js";
+import {
+  getAllRoleIds,
+  isValidResult,
+  getCompletionResults,
+} from "../../roles/index.js";
 import { loadWorkflow } from "../../workflow/index.js";
+
+function workFinishWarningMarker(issueId: number, role: string): string {
+  return `<!-- devclaw:work-finish-warning:${issueId}:${role} -->`;
+}
+
+async function maybeCommentOnRejectedWorkFinish(opts: {
+  provider: Awaited<ReturnType<typeof resolveProvider>>["provider"];
+  issueId: number;
+  role: string;
+  error: Error;
+}): Promise<boolean> {
+  const { provider, issueId, role, error } = opts;
+  const marker = workFinishWarningMarker(issueId, role);
+  const comments = await provider.listComments(issueId).catch(() => []);
+  if (comments.some((comment) => comment.body.includes(marker))) return false;
+
+  const issue = await provider.getIssue(issueId).catch(() => null);
+  const labels = issue?.labels?.length
+    ? issue.labels.join(", ")
+    : "(unavailable)";
+
+  if (
+    !/not active|precondition failed|Completion transition failed|expected current label/i.test(
+      error.message,
+    )
+  ) {
+    return false;
+  }
+
+  await provider.addComment(
+    issueId,
+    `⚠️ DevClaw rejected a \`work_finish\` call for the ${role} worker.\n\n` +
+      `- Reason: ${error.message}\n` +
+      `- Current labels: ${labels}\n\n` +
+      `Suggested corrective actions:\n` +
+      `1. Compare the issue's current workflow label with the worker state in DevClaw.\n` +
+      `2. Clear stale role / owner labels or inactive worker state if they no longer match reality.\n` +
+      `3. Requeue only after the issue label and worker slot state agree again.\n\n` +
+      `${marker}`,
+  );
+  return true;
+}
 
 /**
  * Get the current git branch name.
  */
-async function getCurrentBranch(repoPath: string, runCommand: RunCommand): Promise<string> {
+async function getCurrentBranch(
+  repoPath: string,
+  runCommand: RunCommand,
+): Promise<string> {
   const result = await runCommand(["git", "branch", "--show-current"], {
     timeoutMs: 5_000,
     cwd: repoPath,
   });
   return result.stdout.trim();
 }
-
 
 /**
  * Check if this work_finish is completing a conflict resolution cycle.
@@ -101,10 +158,10 @@ async function validatePrExistsForDeveloper(
 
       throw new Error(
         `Cannot mark work_finish(done) without an open PR.\n\n` +
-        `✗ No PR found for branch: ${branchName}\n\n` +
-        `Please create a PR first:\n` +
-        `  gh pr create --base main --head ${branchName} --title "..." --body "..."\n\n` +
-        `Then call work_finish again.`,
+          `✗ No PR found for branch: ${branchName}\n\n` +
+          `Please create a PR first:\n` +
+          `  gh pr create --base main --head ${branchName} --title "..." --body "..."\n\n` +
+          `Then call work_finish again.`,
       );
     }
 
@@ -128,7 +185,10 @@ async function validatePrExistsForDeveloper(
     // merge conflicts, we must verify the PR is actually mergeable before accepting
     // work_finish(done). Without this check, developers can claim success after local
     // rebase but before pushing, causing infinite dispatch loops (#482).
-    const isConflictCycle = await isConflictResolutionCycle(workspaceDir, issueId);
+    const isConflictCycle = await isConflictResolutionCycle(
+      workspaceDir,
+      issueId,
+    );
 
     if (isConflictCycle && prStatus.mergeable === false) {
       await auditLog(workspaceDir, "work_finish_rejected", {
@@ -141,19 +201,19 @@ async function validatePrExistsForDeveloper(
       const branchName = prStatus.sourceBranch || "your-branch";
       throw new Error(
         `Cannot complete work_finish(done) while PR still shows merge conflicts.\n\n` +
-        `✗ PR status: CONFLICTING\n` +
-        `✗ PR URL: ${prStatus.url}\n` +
-        `✗ Branch: ${branchName}\n\n` +
-        `Your local rebase may have succeeded, but changes must be pushed to the remote.\n\n` +
-        `Verify your changes were pushed:\n` +
-        `  git log origin/${branchName}..HEAD\n` +
-        `  # Should show no commits (meaning everything is pushed)\n\n` +
-        `If unpushed commits exist, push them:\n` +
-        `  git push --force-with-lease origin ${branchName}\n\n` +
-        `Wait a few seconds for GitHub to update, then verify the PR:\n` +
-        `  gh pr view ${issueId}\n` +
-        `  # Should show "Mergeable" status\n\n` +
-        `Once the PR shows as mergeable on GitHub, call work_finish again.`,
+          `✗ PR status: CONFLICTING\n` +
+          `✗ PR URL: ${prStatus.url}\n` +
+          `✗ Branch: ${branchName}\n\n` +
+          `Your local rebase may have succeeded, but changes must be pushed to the remote.\n\n` +
+          `Verify your changes were pushed:\n` +
+          `  git log origin/${branchName}..HEAD\n` +
+          `  # Should show no commits (meaning everything is pushed)\n\n` +
+          `If unpushed commits exist, push them:\n` +
+          `  git push --force-with-lease origin ${branchName}\n\n` +
+          `Wait a few seconds for GitHub to update, then verify the PR:\n` +
+          `  gh pr view ${issueId}\n` +
+          `  # Should show "Mergeable" status\n\n` +
+          `Once the PR shows as mergeable on GitHub, call work_finish again.`,
       );
     }
 
@@ -168,7 +228,11 @@ async function validatePrExistsForDeveloper(
   } catch (err) {
     // Re-throw our own validation errors; swallow provider/network errors.
     // Swallowing keeps work_finish unblocked when the API is unreachable.
-    if (err instanceof Error && (err.message.startsWith("Cannot mark work_finish(done)") || err.message.startsWith("Cannot complete work_finish(done)"))) {
+    if (
+      err instanceof Error &&
+      (err.message.startsWith("Cannot mark work_finish(done)") ||
+        err.message.startsWith("Cannot complete work_finish(done)"))
+    ) {
       throw err;
     }
     console.warn(`PR validation warning for issue #${issueId}:`, err);
@@ -184,11 +248,34 @@ export function createWorkFinishTool(ctx: PluginContext) {
       type: "object",
       required: ["channelId", "role", "result"],
       properties: {
-        channelId: { type: "string", description: "YOUR chat/group ID — the numeric ID of the chat you are in right now (e.g. '-1003844794417'). Do NOT guess; use the ID of the conversation this message came from." },
-        role: { type: "string", enum: getAllRoleIds(), description: "Worker role" },
-        result: { type: "string", enum: ["done", "pass", "fail", "refine", "blocked", "approve", "reject"], description: "Completion result" },
+        channelId: {
+          type: "string",
+          description:
+            "YOUR chat/group ID — the numeric ID of the chat you are in right now (e.g. '-1003844794417'). Do NOT guess; use the ID of the conversation this message came from.",
+        },
+        role: {
+          type: "string",
+          enum: getAllRoleIds(),
+          description: "Worker role",
+        },
+        result: {
+          type: "string",
+          enum: [
+            "done",
+            "pass",
+            "fail",
+            "refine",
+            "blocked",
+            "approve",
+            "reject",
+          ],
+          description: "Completion result",
+        },
         summary: { type: "string", description: "Brief summary" },
-        prUrl: { type: "string", description: "PR/MR URL (auto-detected if omitted)" },
+        prUrl: {
+          type: "string",
+          description: "PR/MR URL (auto-detected if omitted)",
+        },
         createdTasks: {
           type: "array",
           items: {
@@ -200,7 +287,8 @@ export function createWorkFinishTool(ctx: PluginContext) {
               url: { type: "string", description: "Issue URL" },
             },
           },
-          description: "Tasks created during this work session (architect creates implementation tasks).",
+          description:
+            "Tasks created during this work session (architect creates implementation tasks).",
         },
       },
     },
@@ -208,21 +296,32 @@ export function createWorkFinishTool(ctx: PluginContext) {
     async execute(_id: string, params: Record<string, unknown>) {
       const role = params.role as string;
       const result = params.result as string;
-      const channelId = resolveChannelId(toolCtx, params.channelId as string | undefined);
+      const channelId = resolveChannelId(
+        toolCtx,
+        params.channelId as string | undefined,
+      );
       const summary = params.summary as string | undefined;
       const prUrl = params.prUrl as string | undefined;
-      const createdTasks = params.createdTasks as Array<{ id: number; title: string; url: string }> | undefined;
+      const createdTasks = params.createdTasks as
+        | Array<{ id: number; title: string; url: string }>
+        | undefined;
       const workspaceDir = requireWorkspaceDir(toolCtx);
 
       // Validate role:result using registry
       if (!isValidResult(role, result)) {
         const valid = getCompletionResults(role);
-        throw new Error(`${role.toUpperCase()} cannot complete with "${result}". Valid results: ${valid.join(", ")}`);
+        throw new Error(
+          `${role.toUpperCase()} cannot complete with "${result}". Valid results: ${valid.join(", ")}`,
+        );
       }
 
       // Resolve project + worker
       const { project } = await resolveProject(workspaceDir, channelId);
       const roleWorker = getRoleWorker(project, role);
+      const { provider } = await resolveProvider(project, ctx.runCommand);
+      const workflow = await loadWorkflow(workspaceDir, project.name);
+
+      let relatedIssueId: number | null = null;
 
       // Find the first active slot across all levels
       let slotIndex: number | null = null;
@@ -231,12 +330,19 @@ export function createWorkFinishTool(ctx: PluginContext) {
 
       for (const [level, slots] of Object.entries(roleWorker.levels)) {
         for (let i = 0; i < slots.length; i++) {
-          if (slots[i]!.active && slots[i]!.issueId &&
-              (!toolCtx.sessionKey || !slots[i]!.sessionKey ||
-               slots[i]!.sessionKey === toolCtx.sessionKey)) {
+          const slot = slots[i]!;
+          const sessionMatches =
+            !toolCtx.sessionKey ||
+            !slot.sessionKey ||
+            slot.sessionKey === toolCtx.sessionKey;
+          if (!sessionMatches) continue;
+          if (slot.issueId) relatedIssueId = Number(slot.issueId);
+          else if (slot.lastIssueId) relatedIssueId = Number(slot.lastIssueId);
+
+          if (slot.active && slot.issueId) {
             slotLevel = level;
             slotIndex = i;
-            issueId = Number(slots[i]!.issueId);
+            issueId = Number(slot.issueId);
             break;
           }
         }
@@ -244,11 +350,27 @@ export function createWorkFinishTool(ctx: PluginContext) {
       }
 
       if (slotIndex === null || slotLevel === null || issueId === null) {
-        throw new Error(`${role.toUpperCase()} worker not active on ${project.name}`);
+        const error = new Error(
+          `${role.toUpperCase()} worker not active on ${project.name}`,
+        );
+        if (relatedIssueId !== null) {
+          const commented = await maybeCommentOnRejectedWorkFinish({
+            provider,
+            issueId: relatedIssueId,
+            role,
+            error,
+          }).catch(() => false);
+          await auditLog(workspaceDir, "work_finish_rejected", {
+            project: project.name,
+            issue: relatedIssueId,
+            role,
+            reason: "worker_not_active",
+            error: error.message,
+            commented,
+          }).catch(() => {});
+        }
+        throw error;
       }
-
-      const { provider } = await resolveProvider(project, ctx.runCommand);
-      const workflow = await loadWorkflow(workspaceDir, project.name);
 
       if (!getRule(role, result, workflow))
         throw new Error(`Invalid completion: ${role}:${result}`);
@@ -258,31 +380,75 @@ export function createWorkFinishTool(ctx: PluginContext) {
 
       // For developers marking work as done, validate that a PR exists
       if (role === "developer" && result === "done") {
-        await validatePrExistsForDeveloper(issueId, repoPath, provider, ctx.runCommand, workspaceDir, project.slug);
+        await validatePrExistsForDeveloper(
+          issueId,
+          repoPath,
+          provider,
+          ctx.runCommand,
+          workspaceDir,
+          project.slug,
+        );
       }
 
-      const completion = await executeCompletion({
-        workspaceDir, projectSlug: project.slug, role, result, issueId, summary, prUrl, provider, repoPath,
-        projectName: project.name,
-        channels: project.channels,
-        pluginConfig,
-        level: slotLevel,
-        slotIndex,
-        runtime: ctx.runtime,
-        workflow,
-        createdTasks,
-        runCommand: ctx.runCommand,
-      });
+      try {
+        const completion = await executeCompletion({
+          workspaceDir,
+          projectSlug: project.slug,
+          role,
+          result,
+          issueId,
+          summary,
+          prUrl,
+          provider,
+          repoPath,
+          projectName: project.name,
+          channels: project.channels,
+          pluginConfig,
+          level: slotLevel,
+          slotIndex,
+          runtime: ctx.runtime,
+          workflow,
+          createdTasks,
+          runCommand: ctx.runCommand,
+        });
 
-      await auditLog(workspaceDir, "work_finish", {
-        project: project.name, issue: issueId, role, result,
-        summary: summary ?? null, labelTransition: completion.labelTransition,
-      });
+        await auditLog(workspaceDir, "work_finish", {
+          project: project.name,
+          issue: issueId,
+          role,
+          result,
+          summary: summary ?? null,
+          labelTransition: completion.labelTransition,
+        });
 
-      return jsonResult({
-        success: true, project: project.name, projectSlug: project.slug, issueId, role, result,
-        ...completion,
-      });
+        return jsonResult({
+          success: true,
+          project: project.name,
+          projectSlug: project.slug,
+          issueId,
+          role,
+          result,
+          ...completion,
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        const commented = await maybeCommentOnRejectedWorkFinish({
+          provider,
+          issueId,
+          role,
+          error,
+        }).catch(() => false);
+        await auditLog(workspaceDir, "work_finish_rejected", {
+          project: project.name,
+          issue: issueId,
+          role,
+          result,
+          reason: "completion_rejected",
+          error: error.message,
+          commented,
+        }).catch(() => {});
+        throw error;
+      }
     },
   });
 }

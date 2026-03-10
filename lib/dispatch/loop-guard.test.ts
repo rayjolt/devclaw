@@ -1,0 +1,66 @@
+import { afterEach, describe, it } from "node:test";
+import assert from "node:assert";
+import { createTestHarness, type TestHarness } from "../testing/index.js";
+import { dispatchTask } from "./index.js";
+import { log as auditLog } from "../audit.js";
+
+describe("dispatch loop guard", () => {
+  let h: TestHarness;
+
+  afterEach(async () => {
+    if (h) await h.cleanup();
+  });
+
+  it("quarantines an issue instead of redispatching after repeated recent dispatches", async () => {
+    h = await createTestHarness();
+    h.provider.seedIssue({
+      iid: 96,
+      title: "Stop dispatch loops",
+      labels: ["To Improve"],
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await auditLog(h.workspaceDir, "dispatch", {
+        project: h.project.name,
+        issue: 96,
+        issueTitle: "Stop dispatch loops",
+        role: "developer",
+        level: "senior",
+        sessionAction: "send",
+        sessionKey: `test-${i}`,
+        labelTransition: "To Improve → Doing",
+      });
+    }
+
+    const result = await dispatchTask({
+      workspaceDir: h.workspaceDir,
+      agentId: "test-agent",
+      project: h.project,
+      issueId: 96,
+      issueTitle: "Stop dispatch loops",
+      issueDescription: "",
+      issueUrl: "https://github.com/rayjolt/devclaw/issues/96",
+      role: "developer",
+      level: "senior",
+      fromLabel: "To Improve",
+      toLabel: "Doing",
+      provider: h.provider,
+      runCommand: h.runCommand,
+    });
+
+    const issue = await h.provider.getIssue(96);
+    assert.ok(issue.labels.includes("Refining"));
+    assert.ok(issue.labels.includes("workflow:desync"));
+    assert.ok(!issue.labels.includes("Doing"));
+    assert.match(result.announcement, /Paused issue #96/);
+    assert.equal(
+      h.commands.taskMessages().length,
+      0,
+      "should not dispatch task message after quarantine",
+    );
+
+    const comments = await h.provider.listComments(96);
+    assert.equal(comments.length, 1);
+    assert.match(comments[0]!.body, /dispatch loop/i);
+  });
+});
